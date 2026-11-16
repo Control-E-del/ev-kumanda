@@ -23,17 +23,23 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Debug APK derle
-        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Debug APK'lari derle (tablet + tv)
+        run: gradle assembleTabletDebug assembleTvDebug --no-daemon --stacktrace
+
+      - name: APK'lari duzenle
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/tablet/debug/*.apk out/EvKumanda-tablet.apk
+          cp app/build/outputs/apk/tv/debug/*.apk out/EvKumanda-TV.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: ev-kumanda-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: out/*.apk
 
       - name: Release olarak yayinla
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: Ev Kumanda v1.0.${{ github.run_number }}
-          files: app/build/outputs/apk/debug/app-debug.apk
+          tag_name: v1.1.${{ github.run_number }}
+          name: Ev Kumanda v1.1.${{ github.run_number }}
+          files: out/*.apk

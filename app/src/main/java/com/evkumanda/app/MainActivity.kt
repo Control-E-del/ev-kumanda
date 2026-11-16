@@ -1,6 +1,8 @@
 package com.evkumanda.app
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -155,6 +157,21 @@ fun App(ctx: Context) {
                 tvUp = tvUp,
                 onSettings = { screen = "settings" },
                 onRemote = { screen = "remote" },
+                onTvPanel = {
+                    val ip = prefs.get(K.TV_IP)
+                    if (ip.isBlank()) {
+                        msg = "Önce Ayarlar'dan TV IP adresini gir"
+                    } else {
+                        try {
+                            ctx.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse("http://$ip:8765"))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        } catch (e: Exception) {
+                            msg = "Tarayıcı açılamadı"
+                        }
+                    }
+                },
                 onPcOn = { act("PC açılıyor") { pcOn() } },
                 onPcOff = { act("PC kapatılıyor") { pcOff() } },
                 onTvOn = { act("TV açılıyor") { tvOn() } },
@@ -229,6 +246,7 @@ fun HomeScreen(
     tvUp: Boolean?,
     onSettings: () -> Unit,
     onRemote: () -> Unit,
+    onTvPanel: () -> Unit,
     onPcOn: () -> Unit,
     onPcOff: () -> Unit,
     onTvOn: () -> Unit,
@@ -268,7 +286,12 @@ fun HomeScreen(
             up = tvUp,
             onOn = onTvOn,
             onOff = onTvOff,
-            extra = { TextButton(onClick = onRemote) { Text("Kumandayı aç ›", color = Accent) } },
+            extra = {
+                Row {
+                    TextButton(onClick = onRemote) { Text("Kumandayı aç ›", color = Accent) }
+                    TextButton(onClick = onTvPanel) { Text("TV arayüz paneli ›", color = Accent) }
+                }
+            },
         )
         DeviceCard(
             emoji = "🖥️",

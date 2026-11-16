@@ -16,6 +16,18 @@ android {
         versionName = "1.0"
     }
 
+    flavorDimensions += "target"
+    productFlavors {
+        create("tablet") {
+            dimension = "target"
+        }
+        create("tv") {
+            dimension = "target"
+            applicationIdSuffix = ".tv"
+            versionNameSuffix = "-tv"
+        }
+    }
+
     buildTypes {
         release { isMinifyEnabled = false }
     }
@@ -47,6 +59,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.compose.animation:animation")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     // PC'yi SSH ile kapatmak için
