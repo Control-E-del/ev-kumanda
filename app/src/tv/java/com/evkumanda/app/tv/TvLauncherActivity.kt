@@ -378,7 +378,7 @@ fun HomeScreen(act: ComponentActivity, ctx: Context, cfg: TvConfig, accent: Colo
         // Yazılar okunsun diye sol ve alt karartma
         Box(
             Modifier.fillMaxSize().background(
-                Brush.verticalGradient(0f to Color(0x66000000), 0.35f to Color.Transparent, 0.6f to Color(0x33000000), 1f to Color(0xEE000000)),
+                Brush.verticalGradient(0f to Color(0x55000000), 0.2f to Color.Transparent, 0.72f to Color.Transparent, 1f to Color(0x99000000)),
             ),
         )
 
@@ -388,10 +388,10 @@ fun HomeScreen(act: ComponentActivity, ctx: Context, cfg: TvConfig, accent: Colo
                 Column(Modifier.weight(1f)) {
                     Crossfade(targetState = Pair(title, subtitle), animationSpec = tween(600), label = "herotext") { ts ->
                         Column {
-                            Text(ts.first, color = Color.White, fontSize = 40.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 44.sp)
+                            Text(ts.first, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 34.sp)
                             if (ts.second.isNotBlank()) {
                                 Spacer(Modifier.height(4.dp))
-                                Text(ts.second, color = Color.White.copy(alpha = 0.8f), fontSize = 17.sp, fontWeight = FontWeight.Light)
+                                Text(ts.second, color = Color.White.copy(alpha = 0.85f), fontSize = 15.sp, fontWeight = FontWeight.Light)
                             }
                         }
                     }
@@ -401,7 +401,7 @@ fun HomeScreen(act: ComponentActivity, ctx: Context, cfg: TvConfig, accent: Colo
                     }
                 }
                 Spacer(Modifier.width(24.dp))
-                CalendarCard(cfg, now, accent, Modifier.width(290.dp))
+                CalendarCard(cfg, now, accent, Modifier.width(250.dp))
             }
             Spacer(Modifier.height(10.dp))
             AppRow(ctx, cfg, hdmi, accent, onAllApps)
@@ -459,7 +459,7 @@ private fun CalendarCard(cfg: TvConfig, now: Date, accent: Color, modifier: Modi
     }
     val shape = RoundedCornerShape(22.dp)
     Column(
-        modifier.clip(shape).background(Color(0x40101626)).border(1.dp, Color(0x29FFFFFF), shape).padding(16.dp),
+        modifier.clip(shape).background(Color(0x33000000)).border(1.dp, Color(0x29FFFFFF), shape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -538,14 +538,14 @@ private fun AppRow(ctx: Context, cfg: TvConfig, hdmi: List<HdmiInput>, accent: C
     }
     LazyRow(
         Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 10.dp, horizontal = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 22.dp, bottom = 4.dp, start = 14.dp, end = 14.dp),
     ) {
         items(entries.size) { i ->
             val e = entries[i]
             val icon = if (e.pkg != null) rememberAppIcon(ctx, e.pkg) else null
             Tile(
-                label = e.label, icon = icon, emoji = e.emoji, tint = e.tint, accent = accent,
+                label = e.label, icon = icon, emoji = e.emoji, tint = e.tint, accent = accent, small = true,
                 modifier = if (i == 0) Modifier.focusRequester(fr) else Modifier,
                 onClick = e.action,
             )
@@ -613,36 +613,41 @@ fun Tile(
     tint: Color,
     accent: Color,
     modifier: Modifier = Modifier,
+    small: Boolean = false,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.1f else 1f, tween(150), label = "tile")
-    val shape = RoundedCornerShape(22.dp)
+    // Küçük kutular kumandayla üstüne gelince belirgin büyür, yazı yalnız odaktayken görünür
+    val scale by animateFloatAsState(if (focused) (if (small) 1.32f else 1.1f) else 1f, tween(160), label = "tile")
+    val box = if (small) 66.dp else 96.dp
+    val shape = RoundedCornerShape(if (small) 18.dp else 22.dp)
     Column(
         modifier
-            .width(96.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .width(box)
+            .graphicsLayer { scaleX = scale; scaleY = scale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f) }
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             Modifier
-                .size(96.dp)
+                .size(box)
                 .clip(shape)
-                .background(tint)
-                .border(if (focused) 3.dp else 1.dp, if (focused) Color.White else Color(0x1FFFFFFF), shape),
+                .background(if (small && !focused) tint.copy(alpha = 0.8f) else tint)
+                .border(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0x1FFFFFFF), shape),
             contentAlignment = Alignment.Center,
         ) {
             if (icon != null) {
-                Image(bitmap = icon, contentDescription = label, modifier = Modifier.size(62.dp))
+                Image(bitmap = icon, contentDescription = label, modifier = Modifier.size(if (small) 42.dp else 62.dp))
             } else {
-                Text(emoji ?: "•", fontSize = 38.sp, color = Color.White)
+                Text(emoji ?: "•", fontSize = if (small) 26.sp else 38.sp, color = Color.White)
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(if (small) 5.dp else 8.dp))
         Text(
-            label, color = if (focused) Color.White else Color(0xB3FFFFFF), fontSize = 13.sp,
+            label,
+            color = if (focused) Color.White else if (small) Color.Transparent else Color(0xB3FFFFFF),
+            fontSize = if (small) 10.sp else 13.sp,
             fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
     }

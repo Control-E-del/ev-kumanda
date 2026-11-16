@@ -176,12 +176,19 @@ fun App(ctx: Context) {
         }
     }
 
+    val pairHint = "TV ile eşleşme gerekli: Ev › ⚙ Ayarlar › \"TV'yi eşleştir\" (TV ekranındaki kodu gir)"
+
     fun quiet(block: () -> Unit) {
+        if (prefs.get(K.TV_PAIRED) != "1") {
+            msg = pairHint
+            return
+        }
         scope.launch {
             try {
                 withContext(Dispatchers.IO) { block() }
             } catch (e: Exception) {
-                msg = "Hata: ${e.message ?: e.javaClass.simpleName}"
+                if (tv.certReset) prefs.put(K.TV_PAIRED, "")
+                msg = if (e is javax.net.ssl.SSLException || tv.certReset) pairHint else "Hata: ${e.message ?: e.javaClass.simpleName}"
             }
         }
     }
@@ -240,7 +247,10 @@ fun App(ctx: Context) {
                     msg = "TV'nin IP adresi değişmiş, güncellendi: $n"
                 }
             }
-            if (screen == "remote" && tvIp.isNotBlank() && tvUp == true) {
+            if (screen == "remote" && tvIp.isNotBlank() && tvUp == true && prefs.get(K.TV_PAIRED) != "1" && msg.isBlank()) {
+                msg = pairHint
+            }
+            if (screen == "remote" && tvIp.isNotBlank() && tvUp == true && prefs.get(K.TV_PAIRED) == "1") {
                 withContext(Dispatchers.IO) {
                     try { tv.connect(tvIp) } catch (_: Exception) {}
                 }
@@ -376,6 +386,7 @@ fun App(ctx: Context) {
                             val ok = withContext(Dispatchers.IO) { tv.finishPairing(c) }
                             if (ok) {
                                 prefs.put(K.TV_PAIRED, "1")
+                                tv.certReset = false
                                 "TV eşleşti ✓"
                             } else {
                                 "Kod kabul edilmedi"

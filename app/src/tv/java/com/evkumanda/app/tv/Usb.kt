@@ -51,7 +51,13 @@ object UsbMedia {
         return out
     }
 
+    /** "1" adlı dosya (uzantılı ya da uzantısız) her zaman önceliklidir */
+    private fun isOne(f: File) = f.isFile && f.nameWithoutExtension == "1" && f.length() > 1_000_000L &&
+        (f.extension.isEmpty() || videoExt.matches(f.name))
+
     private fun findVideo(root: File): File? {
+        val dirs = listOf(root) + (root.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") } ?: emptyList())
+        for (d in dirs) d.listFiles()?.firstOrNull { isOne(it) }?.let { return it }
         // Önce kök, sonra bir alt klasör (ör. /Video). Gizli/sistem klasörleri atlanır.
         val top = root.listFiles() ?: return null
         top.filter { it.isFile && videoExt.matches(it.name) && it.length() > 0 }.minByOrNull { it.name.lowercase() }?.let { return it }

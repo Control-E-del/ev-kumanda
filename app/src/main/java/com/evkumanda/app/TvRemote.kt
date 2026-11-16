@@ -77,6 +77,7 @@ class TvRemote(private val ctx: Context) {
         const val KEY_VOL_DOWN = 25
         const val KEY_MUTE = 164
         const val KEY_PLAY_PAUSE = 85
+        private val KS_LOCK = Any()
     }
 
     private val ksFile = File(ctx.filesDir, "tv_client.p12")
@@ -98,12 +99,31 @@ class TvRemote(private val ctx: Context) {
 
     // ---------- Sertifika / TLS ----------
 
-    private fun keyStore(): KeyStore {
-        val ks = KeyStore.getInstance("PKCS12")
-        if (ksFile.exists()) {
-            FileInputStream(ksFile).use { ks.load(it, pw) }
-            return ks
+    @Volatile private var cachedKs: KeyStore? = null
+
+    /**
+     * İstemci sertifikası. Tek seferde, kilitli üretilir ve önce geçici dosyaya yazılıp sonra
+     * yeniden adlandırılır (yarım/boş dosya kalmasın: "no data in keystore stream" hatası buydu).
+     * Dosya bozuksa silinip yeniden üretilir; bu durumda TV ile bir kez yeniden eşleştirmek gerekir.
+     */
+    private fun keyStore(): KeyStore = synchronized(KS_LOCK) {
+        cachedKs?.let { return it }
+        if (ksFile.exists() && ksFile.length() > 0) {
+            try {
+                val ks = KeyStore.getInstance("PKCS12")
+                FileInputStream(ksFile).use { ks.load(it, pw) }
+                if (ks.getCertificate("client") != null) {
+                    cachedKs = ks
+                    return ks
+                }
+            } catch (_: Exception) {
+            }
         }
+        if (ksFile.exists()) {
+            ksFile.delete()
+            certReset = true
+        }
+        val ks = KeyStore.getInstance("PKCS12")
         ks.load(null, null)
         val kpg = KeyPairGenerator.getInstance("RSA")
         kpg.initialize(2048)
@@ -121,9 +141,18 @@ class TvRemote(private val ctx: Context) {
         val signer = JcaContentSignerBuilder("SHA256withRSA").build(kp.private)
         val cert = JcaX509CertificateConverter().getCertificate(builder.build(signer))
         ks.setKeyEntry("client", kp.private, pw, arrayOf(cert))
-        FileOutputStream(ksFile).use { ks.store(it, pw) }
-        return ks
+        val tmp = File(ksFile.path + ".tmp")
+        FileOutputStream(tmp).use { ks.store(it, pw) }
+        if (!tmp.renameTo(ksFile)) {
+            tmp.copyTo(ksFile, overwrite = true)
+            tmp.delete()
+        }
+        cachedKs = ks
+        ks
     }
+
+    /** Bozuk sertifika yenilendiyse true: TV ile yeniden eşleştirmek gerekir */
+    @Volatile var certReset = false
 
     private fun sslContext(): SSLContext {
         val ks = keyStore()
