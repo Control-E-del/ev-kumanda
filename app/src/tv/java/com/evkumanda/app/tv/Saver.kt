@@ -148,7 +148,7 @@ class SaverView(ctx: Context, private val cfg: TvConfig) : FrameLayout(ctx) {
     private val clockBox = LinearLayout(ctx)
     private val imgA = ImageView(ctx)
     private val imgB = ImageView(ctx)
-    private var video: VideoView? = null
+    private var video: SeamlessVideoView? = null
     private var files: List<File> = emptyList()
     private var idx = 0
     private var front = true
@@ -186,13 +186,8 @@ class SaverView(ctx: Context, private val cfg: TvConfig) : FrameLayout(ctx) {
     private fun buildVideo(): Boolean {
         val f = File(TvStore.mediaDir(context), cfg.saverVideo)
         if (cfg.saverVideo.isBlank() || !f.exists()) return false
-        val v = VideoView(context)
-        v.setVideoURI(Uri.fromFile(f))
-        v.setOnPreparedListener { mp ->
-            mp.isLooping = true
-            mp.setVolume(0f, 0f)
-        }
-        addView(v, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        val v = SeamlessVideoView(context, f)
+        addView(v, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         video = v
         return true
     }
@@ -261,7 +256,7 @@ class SaverView(ctx: Context, private val cfg: TvConfig) : FrameLayout(ctx) {
     fun stop() {
         running = false
         handler.removeCallbacksAndMessages(null)
-        try { video?.stopPlayback() } catch (_: Exception) {}
+        video?.pause()
     }
 
     init {

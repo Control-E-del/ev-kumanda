@@ -6,9 +6,14 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,15 +24,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -45,10 +50,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -56,32 +66,63 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val Bg1 = Color(0xFF0B0F1A)
-private val Bg2 = Color(0xFF1A1033)
-private val CardBg = Color(0xFF171E33)
-private val Accent = Color(0xFF8B6CFF)
+// ---------------------------------------------------------------- tema
+
+private class Theme(val key: String, val name: String, val c1: Color, val c2: Color, val c3: Color, val accent: Color)
+
+private val Themes = listOf(
+    Theme("kirmizi", "Kırmızı", Color(0xFFE0482B), Color(0xFF8C1A12), Color(0xFF2B0808), Color(0xFFFF6A4D)),
+    Theme("mor", "Mor", Color(0xFF7C5CFF), Color(0xFF3A2380), Color(0xFF120B2B), Color(0xFF9B8CFF)),
+    Theme("mavi", "Mavi", Color(0xFF2F80ED), Color(0xFF123E8A), Color(0xFF071329), Color(0xFF5AA2FF)),
+    Theme("yesil", "Yeşil", Color(0xFF1FB36B), Color(0xFF0E5B3A), Color(0xFF051F15), Color(0xFF3DDC97)),
+)
+
+private fun themeOf(k: String): Theme = Themes.firstOrNull { it.key == k } ?: Themes[0]
+
 private val Good = Color(0xFF3DDC97)
-private val Muted = Color(0xFF8A93AD)
-private val Warn = Color(0xFFFF6B6B)
+private val Bad = Color(0xFFFF8A80)
+
+private fun Modifier.glass(shape: Shape = RoundedCornerShape(28.dp), a: Float = 0.12f): Modifier =
+    this.clip(shape).background(Color.White.copy(alpha = a)).border(1.dp, Color.White.copy(alpha = 0.18f), shape)
+
+private fun appName(pkg: String?): String = when (pkg) {
+    null -> "Bilinmiyor"
+    "com.netflix.ninja" -> "Netflix"
+    "com.google.android.youtube.tv" -> "YouTube"
+    "com.amazon.amazonvideo.livingroom" -> "Prime Video"
+    "com.spotify.tv.android" -> "Spotify"
+    "com.disney.disneyplus" -> "Disney+"
+    "tv.twitch.android.app" -> "Twitch"
+    "com.android.vending" -> "Play Store"
+    "com.google.android.apps.tv.launcherx" -> "Ana ekran"
+    "com.evkumanda.app.tv" -> "Ev TV"
+    else -> pkg.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+}
+
+private class AppTile(val id: String, val label: String, val link: String?, val c1: Color, val c2: Color)
+
+private val Tiles = listOf(
+    AppTile("ps5", "PS5", null, Color(0xFF3B82F6), Color(0xFF1D4ED8)),
+    AppTile("netflix", "Netflix", "https://www.netflix.com", Color(0xFF3A1111), Color(0xFFE50914)),
+    AppTile("youtube", "YouTube", "https://www.youtube.com", Color(0xFF5A1414), Color(0xFFFF2D2D)),
+    AppTile("prime", "Prime", "https://app.primevideo.com", Color(0xFF0B3C5D), Color(0xFF1FA5E0)),
+    AppTile("spotify", "Spotify", "https://open.spotify.com", Color(0xFF0B3D24), Color(0xFF1DB954)),
+    AppTile("disney", "Disney+", "https://www.disneyplus.com", Color(0xFF0A1A4A), Color(0xFF2B59D6)),
+    AppTile("twitch", "Twitch", "https://www.twitch.tv", Color(0xFF2A1450), Color(0xFF9146FF)),
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(
-                colorScheme = darkColorScheme(
-                    primary = Accent,
-                    background = Bg1,
-                    surface = CardBg,
-                    onSurface = Color.White,
-                    onBackground = Color.White,
-                ),
-            ) {
+            MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFFF6A4D), surface = Color(0xFF2B0808))) {
                 App(applicationContext)
             }
         }
     }
 }
+
+// ---------------------------------------------------------------- kök
 
 @Composable
 fun App(ctx: Context) {
@@ -89,12 +130,17 @@ fun App(ctx: Context) {
     val tv = remember { TvRemote(ctx) }
     val scope = rememberCoroutineScope()
 
-    var screen by remember { mutableStateOf("home") }
-    var msg by remember { mutableStateOf("Hazır") }
+    var screen by remember { mutableStateOf("remote") }
+    var themeKey by remember { mutableStateOf(prefs.get(K.THEME)) }
+    var msg by remember { mutableStateOf("") }
     var pcUp by remember { mutableStateOf<Boolean?>(null) }
     var tvUp by remember { mutableStateOf<Boolean?>(null) }
+    var nowApp by remember { mutableStateOf<String?>(null) }
+    var tvOnState by remember { mutableStateOf<Boolean?>(null) }
+    var selectedTile by remember { mutableStateOf("") }
     var showCode by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
+    val theme = themeOf(themeKey)
 
     fun act(label: String, block: () -> Unit) {
         scope.launch {
@@ -104,6 +150,16 @@ fun App(ctx: Context) {
                 "$label ✓"
             } catch (e: Exception) {
                 "$label başarısız: ${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+    }
+
+    fun quiet(block: () -> Unit) {
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { block() }
+            } catch (e: Exception) {
+                msg = "Hata: ${e.message ?: e.javaClass.simpleName}"
             }
         }
     }
@@ -120,84 +176,115 @@ fun App(ctx: Context) {
             val tvIp = prefs.get(K.TV_IP)
             pcUp = if (pcIp.isBlank()) null else withContext(Dispatchers.IO) { Net.up(pcIp, intArrayOf(22, 3389, 445, 135)) }
             tvUp = if (tvIp.isBlank()) null else withContext(Dispatchers.IO) { Net.up(tvIp, intArrayOf(6466, 8009, 8008)) }
-            delay(6000)
+            if (screen == "remote" && tvIp.isNotBlank() && tvUp == true) {
+                withContext(Dispatchers.IO) {
+                    try { tv.connect(tvIp) } catch (_: Exception) {}
+                }
+                nowApp = tv.currentApp
+                tvOnState = tv.poweredOn
+            }
+            delay(4000)
         }
     }
 
     Box(
         Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Bg1, Bg2))),
+            .drawBehind {
+                drawRect(
+                    Brush.radialGradient(
+                        colors = listOf(theme.c1, theme.c2, theme.c3),
+                        center = Offset(size.width * 0.5f, size.height * 0.62f),
+                        radius = size.maxDimension * 0.95f,
+                    ),
+                )
+            },
     ) {
-        when (screen) {
-            "settings" -> SettingsScreen(prefs, onBack = { screen = "home" }, onPair = {
-                val ip = prefs.get(K.TV_IP)
-                scope.launch {
-                    msg = "TV ile eşleşme başlatılıyor…"
-                    try {
-                        withContext(Dispatchers.IO) { tv.startPairing(ip) }
-                        showCode = true
-                        msg = "TV ekranındaki 6 haneli kodu gir"
-                    } catch (e: Exception) {
-                        msg = "Eşleşme başlatılamadı: ${e.message ?: e.javaClass.simpleName}"
-                    }
+        Column(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f)) {
+                when (screen) {
+                    "settings" -> SettingsScreen(prefs, theme, msg,
+                        onBack = {
+                            themeKey = prefs.get(K.THEME)
+                            screen = "home"
+                        },
+                        onPair = {
+                            val ip = prefs.get(K.TV_IP)
+                            scope.launch {
+                                msg = "TV ile eşleşme başlatılıyor…"
+                                try {
+                                    withContext(Dispatchers.IO) { tv.startPairing(ip) }
+                                    showCode = true
+                                    msg = "TV ekranındaki 6 haneli kodu gir"
+                                } catch (e: Exception) {
+                                    msg = "Eşleşme başlatılamadı: ${e.message ?: e.javaClass.simpleName}"
+                                }
+                            }
+                        },
+                    )
+
+                    "home" -> HomeScreen(
+                        theme = theme, msg = msg, pcUp = pcUp, tvUp = tvUp,
+                        onSettings = { screen = "settings" },
+                        onTvPanel = {
+                            val ip = prefs.get(K.TV_IP)
+                            if (ip.isBlank()) {
+                                msg = "Önce Ayarlar'dan TV IP adresini gir"
+                            } else {
+                                try {
+                                    ctx.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse("http://$ip:8765"))
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                } catch (e: Exception) {
+                                    msg = "Tarayıcı açılamadı"
+                                }
+                            }
+                        },
+                        onPcOn = { act("PC açılıyor") { pcOn() } },
+                        onPcOff = { act("PC kapatılıyor") { pcOff() } },
+                        onPsOn = { act("PS5 uyandırılıyor") { ps5On() } },
+                        onGame = {
+                            act("Oyun modu") {
+                                tvOn()
+                                Thread.sleep(2000)
+                                ps5On()
+                            }
+                        },
+                        onMovie = {
+                            act("Film modu") {
+                                tvOn()
+                                Thread.sleep(6000)
+                                tv.openLink(prefs.get(K.TV_IP), "https://www.youtube.com")
+                            }
+                        },
+                        onAllOff = {
+                            act("Hepsi kapatılıyor") {
+                                try { tvOff() } catch (_: Exception) {}
+                                pcOff()
+                            }
+                        },
+                    )
+
+                    else -> RemoteScreen(
+                        theme = theme, msg = msg, tvUp = tvUp, tvOnState = tvOnState, nowApp = nowApp,
+                        selected = selectedTile,
+                        onPower = {
+                            if (tvUp == true && tvOnState != false) act("TV kapatılıyor") { tvOff() }
+                            else act("TV açılıyor") { tvOn() }
+                        },
+                        onKey = { k -> quiet { tv.key(prefs.get(K.TV_IP), k) } },
+                        onTile = { t ->
+                            selectedTile = t.id
+                            if (t.id == "ps5") act("PS5 uyandırılıyor") { ps5On() }
+                            else if (t.link != null) act("${t.label} açılıyor") { tv.openLink(prefs.get(K.TV_IP), t.link) }
+                        },
+                    )
                 }
-            }, msg = msg)
-
-            "remote" -> RemoteScreen(
-                msg = msg,
-                onBack = { screen = "home" },
-                onKey = { k -> act("Tuş") { tv.key(prefs.get(K.TV_IP), k) } },
-                onLink = { url, name -> act(name) { tv.openLink(prefs.get(K.TV_IP), url) } },
-            )
-
-            else -> HomeScreen(
-                msg = msg,
-                pcUp = pcUp,
-                tvUp = tvUp,
-                onSettings = { screen = "settings" },
-                onRemote = { screen = "remote" },
-                onTvPanel = {
-                    val ip = prefs.get(K.TV_IP)
-                    if (ip.isBlank()) {
-                        msg = "Önce Ayarlar'dan TV IP adresini gir"
-                    } else {
-                        try {
-                            ctx.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse("http://$ip:8765"))
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                            )
-                        } catch (e: Exception) {
-                            msg = "Tarayıcı açılamadı"
-                        }
-                    }
-                },
-                onPcOn = { act("PC açılıyor") { pcOn() } },
-                onPcOff = { act("PC kapatılıyor") { pcOff() } },
-                onTvOn = { act("TV açılıyor") { tvOn() } },
-                onTvOff = { act("TV kapatılıyor") { tvOff() } },
-                onPsOn = { act("PS5 uyandırılıyor") { ps5On() } },
-                onGame = {
-                    act("Oyun modu") {
-                        tvOn()
-                        Thread.sleep(2000)
-                        ps5On()
-                    }
-                },
-                onMovie = {
-                    act("Film modu") {
-                        tvOn()
-                        Thread.sleep(6000)
-                        tv.openLink(prefs.get(K.TV_IP), "https://www.youtube.com")
-                    }
-                },
-                onAllOff = {
-                    act("Hepsi kapatılıyor") {
-                        try { tvOff() } catch (_: Exception) {}
-                        pcOff()
-                    }
-                },
-            )
+            }
+            if (screen != "settings") {
+                BottomTabs(screen, theme) { screen = it }
+            }
         }
     }
 
@@ -239,216 +326,309 @@ fun App(ctx: Context) {
     }
 }
 
+// ---------------------------------------------------------------- alt sekmeler
+
 @Composable
-fun HomeScreen(
+private fun BottomTabs(current: String, theme: Theme, onSelect: (String) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Row(Modifier.glass(RoundedCornerShape(50), 0.14f).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((id, label) in listOf("remote" to "📺  Kumanda", "home" to "🏠  Ev")) {
+                val sel = current == id
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(if (sel) Color.White.copy(alpha = 0.22f) else Color.Transparent)
+                        .clickable { onSelect(id) }
+                        .padding(horizontal = 26.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(label, color = Color.White, fontSize = 15.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- kumanda
+
+@Composable
+private fun RemoteScreen(
+    theme: Theme,
+    msg: String,
+    tvUp: Boolean?,
+    tvOnState: Boolean?,
+    nowApp: String?,
+    selected: String,
+    onPower: () -> Unit,
+    onKey: (Int) -> Unit,
+    onTile: (AppTile) -> Unit,
+) {
+    val connected = tvUp == true
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.glass(RoundedCornerShape(50), 0.14f).padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(9.dp).clip(CircleShape).background(if (connected) Good else Bad))
+                Spacer(Modifier.width(10.dp))
+                Text("Google TV", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Spacer(Modifier.width(8.dp))
+                Text(if (connected) "bağlı" else "çevrimdışı", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+            }
+            Spacer(Modifier.weight(1f))
+            Box(
+                Modifier.size(48.dp).glass(CircleShape, 0.14f).clickable(onClick = onPower),
+                contentAlignment = Alignment.Center,
+            ) { Text("⏻", color = Color.White, fontSize = 20.sp) }
+        }
+
+        // Şimdi TV'de
+        Row(
+            Modifier.fillMaxWidth().glass(RoundedCornerShape(26.dp), 0.12f).padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val name = if (!connected) "TV kapalı" else appName(nowApp)
+            Box(
+                Modifier.size(64.dp).clip(RoundedCornerShape(18.dp))
+                    .background(Brush.linearGradient(listOf(theme.accent, theme.c2))),
+                contentAlignment = Alignment.Center,
+            ) { Text(name.take(1).uppercase(), color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold) }
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text("ŞİMDİ TV'DE", color = Color.White.copy(alpha = 0.65f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
+                Text(name, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    when {
+                        !connected -> "Açmak için ⏻ düğmesine bas"
+                        tvOnState == false -> "Ekran kapalı"
+                        else -> nowApp ?: "Bağlanıyor…"
+                    },
+                    color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp, maxLines = 1,
+                )
+            }
+        }
+
+        // Uygulama kartları
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(Tiles) { t ->
+                val sel = selected == t.id
+                Box(
+                    Modifier
+                        .size(width = 112.dp, height = 132.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Brush.verticalGradient(listOf(t.c1, t.c2)))
+                        .border(if (sel) 2.dp else 1.dp, Color.White.copy(alpha = if (sel) 0.95f else 0.15f), RoundedCornerShape(24.dp))
+                        .clickable { onTile(t) }
+                        .padding(12.dp),
+                    contentAlignment = Alignment.BottomStart,
+                ) { Text(t.label, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp) }
+            }
+        }
+
+        // Yön tuşları
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                RoundBtn("↩") { onKey(TvRemote.KEY_BACK) }
+                RoundBtn("⌂") { onKey(TvRemote.KEY_HOME) }
+            }
+            Box(Modifier.size(214.dp).glass(CircleShape, 0.13f), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier.size(86.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.15f))
+                        .clickable { onKey(TvRemote.KEY_OK) },
+                    contentAlignment = Alignment.Center,
+                ) { Text("Tamam", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp) }
+                Chev("▲", Alignment.TopCenter) { onKey(TvRemote.KEY_UP) }
+                Chev("▼", Alignment.BottomCenter) { onKey(TvRemote.KEY_DOWN) }
+                Chev("◀", Alignment.CenterStart) { onKey(TvRemote.KEY_LEFT) }
+                Chev("▶", Alignment.CenterEnd) { onKey(TvRemote.KEY_RIGHT) }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                RoundBtn("⏯") { onKey(TvRemote.KEY_PLAY_PAUSE) }
+                RoundBtn("🔇") { onKey(TvRemote.KEY_MUTE) }
+            }
+        }
+
+        // Ses
+        Row(
+            Modifier.fillMaxWidth().glass(RoundedCornerShape(50), 0.13f).padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HoldBtn("−") { onKey(TvRemote.KEY_VOL_DOWN) }
+            Text("🔊  Ses", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            HoldBtn("+") { onKey(TvRemote.KEY_VOL_UP) }
+        }
+
+        if (msg.isNotBlank()) {
+            Text(msg, color = if (msg.contains("başarısız") || msg.contains("Hata")) Bad else Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun RoundBtn(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier.size(54.dp).glass(CircleShape, 0.14f).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Text(label, color = Color.White, fontSize = 20.sp) }
+}
+
+@Composable
+private fun BoxScope.Chev(label: String, at: Alignment, onClick: () -> Unit) {
+    Box(
+        Modifier.align(at).padding(10.dp).size(52.dp).clip(CircleShape).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Text(label, color = Color.White.copy(alpha = 0.85f), fontSize = 16.sp) }
+}
+
+/** Basılı tutunca tekrarlayan düğme (ses için) */
+@Composable
+private fun HoldBtn(label: String, onTick: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    Box(
+        Modifier
+            .size(52.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.16f))
+            .pointerInput(Unit) {
+                detectTapGestures(onPress = {
+                    val job = scope.launch {
+                        onTick()
+                        delay(400)
+                        while (true) {
+                            onTick()
+                            delay(140)
+                        }
+                    }
+                    tryAwaitRelease()
+                    job.cancel()
+                })
+            },
+        contentAlignment = Alignment.Center,
+    ) { Text(label, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold) }
+}
+
+// ---------------------------------------------------------------- ev (cihazlar)
+
+@Composable
+private fun HomeScreen(
+    theme: Theme,
     msg: String,
     pcUp: Boolean?,
     tvUp: Boolean?,
     onSettings: () -> Unit,
-    onRemote: () -> Unit,
     onTvPanel: () -> Unit,
     onPcOn: () -> Unit,
     onPcOff: () -> Unit,
-    onTvOn: () -> Unit,
-    onTvOff: () -> Unit,
     onPsOn: () -> Unit,
     onGame: () -> Unit,
     onMovie: () -> Unit,
     onAllOff: () -> Unit,
 ) {
     Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Ev Kumanda", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                Text("Evdeki her şey tek yerden", color = Muted, fontSize = 14.sp)
+                Text("Ev", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                Text("Evdeki her şey tek yerden", color = Color.White.copy(alpha = 0.65f), fontSize = 14.sp)
             }
-            TextButton(onClick = onSettings) { Text("⚙ Ayarlar", color = Accent) }
+            Box(Modifier.size(48.dp).glass(CircleShape, 0.14f).clickable(onClick = onSettings), contentAlignment = Alignment.Center) {
+                Text("⚙", color = Color.White, fontSize = 20.sp)
+            }
         }
 
-        Text("Sahneler", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text("Sahneler", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SceneButton("🎮", "Oyun", onGame, Modifier.weight(1f))
-            SceneButton("🎬", "Film", onMovie, Modifier.weight(1f))
-            SceneButton("🌙", "Hepsini kapat", onAllOff, Modifier.weight(1f))
+            Scene("🎮", "Oyun", onGame, Modifier.weight(1f))
+            Scene("🎬", "Film", onMovie, Modifier.weight(1f))
+            Scene("🌙", "Hepsini kapat", onAllOff, Modifier.weight(1f))
         }
 
-        Text("Cihazlar", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        DeviceCard(
-            emoji = "📺",
-            title = "Google TV",
-            sub = "Aç/kapat, kumanda, uygulamalar",
-            up = tvUp,
-            onOn = onTvOn,
-            onOff = onTvOff,
-            extra = {
-                Row {
-                    TextButton(onClick = onRemote) { Text("Kumandayı aç ›", color = Accent) }
-                    TextButton(onClick = onTvPanel) { Text("TV arayüz paneli ›", color = Accent) }
-                }
-            },
-        )
-        DeviceCard(
-            emoji = "🖥️",
-            title = "Bilgisayar",
-            sub = "Wake-on-LAN ile aç, SSH ile kapat",
-            up = pcUp,
-            onOn = onPcOn,
-            onOff = onPcOff,
-        )
-        DeviceCard(
-            emoji = "🎮",
-            title = "PlayStation 5",
-            sub = "Dinlenme modundan uyandır. Kapatma: TV ile (HDMI-CEC)",
-            up = null,
-            onOn = onPsOn,
-            onOff = null,
-        )
+        Text("Cihazlar", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        DeviceCard("🖥️", "Bilgisayar", "Wake-on-LAN ile aç, SSH ile kapat", pcUp, onPcOn, onPcOff)
+        DeviceCard("🎮", "PlayStation 5", "Uyandır. Kapatma: TV ile (HDMI-CEC)", null, onPsOn, null)
+        DeviceCard("📺", "TV arayüzü", "Afiş, video, ekran koruyucu ayarları", tvUp, onTvPanel, null, onLabel = "Paneli aç")
 
-        Spacer(Modifier.height(4.dp))
-        Text(msg, color = if (msg.contains("başarısız") || msg.contains("başlatılamadı")) Warn else Muted, fontSize = 13.sp)
+        if (msg.isNotBlank()) {
+            Text(msg, color = if (msg.contains("başarısız") || msg.contains("başlatılamadı")) Bad else Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+        }
     }
 }
 
 @Composable
-fun SceneButton(emoji: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.height(86.dp),
-        shape = RoundedCornerShape(20.dp),
-        contentPadding = PaddingValues(8.dp),
+private fun Scene(emoji: String, label: String, onClick: () -> Unit, modifier: Modifier) {
+    Column(
+        modifier.height(88.dp).glass(RoundedCornerShape(22.dp), 0.15f).clickable(onClick = onClick).padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(emoji, fontSize = 26.sp)
-            Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        }
+        Text(emoji, fontSize = 26.sp)
+        Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
 @Composable
-fun DeviceCard(
+private fun DeviceCard(
     emoji: String,
     title: String,
     sub: String,
     up: Boolean?,
     onOn: () -> Unit,
     onOff: (() -> Unit)?,
-    extra: (@Composable () -> Unit)? = null,
-) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(52.dp)
-                        .clip(CircleShape)
-                        .background(Accent.copy(alpha = 0.18f)),
-                    contentAlignment = Alignment.Center,
-                ) { Text(emoji, fontSize = 26.sp) }
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                    Text(sub, color = Muted, fontSize = 12.sp)
-                }
-                val dot = when (up) {
-                    true -> Good
-                    false -> Warn
-                    null -> Muted
-                }
-                val label = when (up) {
-                    true -> "açık"
-                    false -> "kapalı"
-                    null -> "—"
-                }
-                Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
-                Spacer(Modifier.width(6.dp))
-                Text(label, color = dot, fontSize = 12.sp)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FilledTonalButton(onClick = onOn, modifier = Modifier.weight(1f)) { Text("Aç") }
-                if (onOff != null) {
-                    OutlinedButton(onClick = onOff, modifier = Modifier.weight(1f)) { Text("Kapat") }
-                }
-            }
-            if (extra != null) extra()
-        }
-    }
-}
-
-@Composable
-fun RemoteScreen(
-    msg: String,
-    onBack: () -> Unit,
-    onKey: (Int) -> Unit,
-    onLink: (String, String) -> Unit,
+    onLabel: String = "Aç",
 ) {
     Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        Modifier.fillMaxWidth().glass(RoundedCornerShape(26.dp), 0.12f).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹ Geri", color = Accent) }
-            Spacer(Modifier.weight(1f))
-            Text("Google TV Kumanda", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.weight(1f))
-            Spacer(Modifier.width(60.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(50.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
+                Text(emoji, fontSize = 24.sp)
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text(sub, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+            }
+            val dot = when (up) {
+                true -> Good
+                false -> Bad
+                null -> Color.White.copy(alpha = 0.4f)
+            }
+            Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                when (up) { true -> "açık"; false -> "kapalı"; null -> "—" },
+                color = dot, fontSize = 12.sp,
+            )
         }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            KeyBtn("⏻") { onKey(TvRemote.KEY_POWER) }
-            KeyBtn("⌂") { onKey(TvRemote.KEY_HOME) }
-            KeyBtn("↩") { onKey(TvRemote.KEY_BACK) }
-            KeyBtn("🔇") { onKey(TvRemote.KEY_MUTE) }
-        }
-        KeyBtn("▲") { onKey(TvRemote.KEY_UP) }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            KeyBtn("◀") { onKey(TvRemote.KEY_LEFT) }
-            KeyBtn("OK", big = true) { onKey(TvRemote.KEY_OK) }
-            KeyBtn("▶") { onKey(TvRemote.KEY_RIGHT) }
-        }
-        KeyBtn("▼") { onKey(TvRemote.KEY_DOWN) }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            KeyBtn("Ses −") { onKey(TvRemote.KEY_VOL_DOWN) }
-            KeyBtn("⏯") { onKey(TvRemote.KEY_PLAY_PAUSE) }
-            KeyBtn("Ses +") { onKey(TvRemote.KEY_VOL_UP) }
-        }
-
-        Text("Uygulamalar", color = Muted, fontSize = 13.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = { onLink("https://www.youtube.com", "YouTube") }) { Text("YouTube") }
-            OutlinedButton(onClick = { onLink("https://www.netflix.com", "Netflix") }) { Text("Netflix") }
-            OutlinedButton(onClick = { onLink("https://www.primevideo.com", "Prime Video") }) { Text("Prime") }
+            Button(
+                onClick = onOn, modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.22f), contentColor = Color.White),
+            ) { Text(onLabel) }
+            if (onOff != null) {
+                OutlinedButton(
+                    onClick = onOff, modifier = Modifier.weight(1f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.4f)),
+                ) { Text("Kapat", color = Color.White) }
+            }
         }
-        Text(msg, color = if (msg.contains("başarısız")) Warn else Muted, fontSize = 13.sp)
     }
 }
 
-@Composable
-fun KeyBtn(label: String, big: Boolean = false, onClick: () -> Unit) {
-    FilledTonalButton(
-        onClick = onClick,
-        modifier = Modifier.size(if (big) 92.dp else 72.dp),
-        shape = CircleShape,
-        contentPadding = PaddingValues(0.dp),
-    ) { Text(label, fontSize = if (label.length > 2) 13.sp else 22.sp) }
-}
+// ---------------------------------------------------------------- ayarlar
 
 @Composable
-fun SettingsScreen(prefs: Prefs, onBack: () -> Unit, onPair: () -> Unit, msg: String) {
+private fun SettingsScreen(prefs: Prefs, theme: Theme, msg: String, onBack: () -> Unit, onPair: () -> Unit) {
     val s = remember {
         mutableStateMapOf<String, String>().apply { K.all.forEach { put(it, prefs.get(it)) } }
     }
@@ -460,7 +640,7 @@ fun SettingsScreen(prefs: Prefs, onBack: () -> Unit, onPair: () -> Unit, msg: St
             onValueChange = { s[key] = it },
             label = { Text(label) },
             singleLine = true,
-            visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+            visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
             modifier = Modifier.fillMaxWidth(),
         )
     }
@@ -470,28 +650,42 @@ fun SettingsScreen(prefs: Prefs, onBack: () -> Unit, onPair: () -> Unit, msg: St
     }
 
     Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { save(); onBack() }) { Text("‹ Kaydet ve dön", color = Accent) }
-        }
-        Text("Ayarlar", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        TextButton(onClick = { save(); onBack() }) { Text("‹ Kaydet ve dön", color = Color.White) }
+        Text("Ayarlar", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
 
-        Text("📺 Google TV", fontWeight = FontWeight.SemiBold)
+        Text("🎨 Tema", color = Color.White, fontWeight = FontWeight.SemiBold)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            for (t in Themes) {
+                val sel = s[K.THEME] == t.key
+                Box(
+                    Modifier
+                        .size(width = 74.dp, height = 44.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Brush.linearGradient(listOf(t.c1, t.c2)))
+                        .border(if (sel) 2.dp else 1.dp, Color.White.copy(alpha = if (sel) 1f else 0.25f), RoundedCornerShape(14.dp))
+                        .clickable { s[K.THEME] = t.key },
+                    contentAlignment = Alignment.Center,
+                ) { Text(t.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            }
+        }
+
+        Text("📺 Google TV", color = Color.White, fontWeight = FontWeight.SemiBold)
         Field("TV IP adresi (ör. 192.168.1.20)", K.TV_IP)
         Field("TV MAC adresi (Wake-on-LAN için)", K.TV_MAC)
-        Button(onClick = { save(); onPair() }, modifier = Modifier.fillMaxWidth()) { Text("TV'yi eşleştir (bir kez)") }
+        Button(
+            onClick = { save(); onPair() }, modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.22f), contentColor = Color.White),
+        ) { Text("TV'yi eşleştir (bir kez)") }
         Text(
             "TV'de: Ayarlar › Sistem › Ağ'da 'Wi-Fi/LAN ile uyandırma' ve ağ bekleme modunu aç. " +
                 "Eşleştirmede TV ekranında 6 haneli kod çıkar.",
-            color = Muted, fontSize = 12.sp,
+            color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp,
         )
 
-        Text("🖥️ Bilgisayar", fontWeight = FontWeight.SemiBold)
+        Text("🖥️ Bilgisayar", color = Color.White, fontWeight = FontWeight.SemiBold)
         Field("PC IP adresi", K.PC_IP)
         Field("PC MAC adresi", K.PC_MAC)
         Field("SSH kullanıcı adı", K.PC_USER)
@@ -499,20 +693,23 @@ fun SettingsScreen(prefs: Prefs, onBack: () -> Unit, onPair: () -> Unit, msg: St
         Field("Kapatma komutu", K.PC_CMD)
         Text(
             "Windows'ta kapatmak için 'OpenSSH Server' özelliğini kur. Linux'ta komut: sudo shutdown now",
-            color = Muted, fontSize = 12.sp,
+            color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp,
         )
 
-        Text("🎮 PlayStation 5", fontWeight = FontWeight.SemiBold)
+        Text("🎮 PlayStation 5", color = Color.White, fontWeight = FontWeight.SemiBold)
         Field("PS5 IP adresi", K.PS5_IP)
         Field("PS5 user-credential", K.PS5_CRED)
         Text(
             "PS5'te: Ayarlar › Sistem › Uzaktan Oynatma'yı aç; Güç tasarrufu › Dinlenme modunda kullanılabilir özellikler › " +
                 "'İnternete bağlı kal' ve 'Ağdan PS5'i açmayı etkinleştir'. Kapatmak için Ayarlar › Sistem › HDMI › " +
                 "'HDMI cihaz bağlantısını etkinleştir' aç, TV kapanınca PS5 de dinlenmeye geçer.",
-            color = Muted, fontSize = 12.sp,
+            color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp,
         )
 
-        Button(onClick = { save(); onBack() }, modifier = Modifier.fillMaxWidth()) { Text("Kaydet") }
-        Text(msg, color = Muted, fontSize = 13.sp)
+        Button(
+            onClick = { save(); onBack() }, modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = theme.accent, contentColor = Color.White),
+        ) { Text("Kaydet") }
+        Text(msg, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
     }
 }

@@ -62,6 +62,9 @@ dependencies {
     implementation("androidx.compose.animation:animation")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
+    // TV arayüzü: kesintisiz video arka plan
+    "tvImplementation"("androidx.media3:media3-exoplayer:1.4.1")
+
     // PC'yi SSH ile kapatmak için
     implementation("com.github.mwiede:jsch:0.2.20")
     // Google TV eşleştirmesi için istemci sertifikası üretimi

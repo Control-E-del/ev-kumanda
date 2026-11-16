@@ -30,6 +30,7 @@ data class TvConfig(
     val userName: String = "",
     val accent: String = "#8B6CFF",
     val saverVideo: String = "",
+    val homeVideo: String = "",
 ) {
     fun toJson(): JSONObject {
         val o = JSONObject()
@@ -58,6 +59,7 @@ data class TvConfig(
         o.put("userName", userName)
         o.put("accent", accent)
         o.put("saverVideo", saverVideo)
+        o.put("homeVideo", homeVideo)
         return o
     }
 
@@ -94,6 +96,7 @@ data class TvConfig(
                 userName = o.optString("userName"),
                 accent = o.optString("accent", d.accent),
                 saverVideo = o.optString("saverVideo"),
+                homeVideo = o.optString("homeVideo"),
             )
         }
     }

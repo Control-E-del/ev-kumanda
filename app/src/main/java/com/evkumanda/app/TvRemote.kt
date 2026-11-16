@@ -89,6 +89,10 @@ class TvRemote(private val ctx: Context) {
     @Volatile var poweredOn: Boolean? = null
         private set
 
+    /** TV'de şu an açık olan uygulamanın paket adı (bağlıyken güncellenir) */
+    @Volatile var currentApp: String? = null
+        private set
+
     private var pairSock: SSLSocket? = null
     private var serverKey: RSAPublicKey? = null
 
@@ -276,6 +280,10 @@ class TvRemote(private val ctx: Context) {
                             val inner = b(8) + varint(v)
                             send(o, b(74) + varint(inner.size) + inner)
                         }
+                        tag == 162 && m.size > 5 && (m[1].toInt() and 0xFF) == 1 && m[3].toInt() == 10 -> {
+                            val plen = readVarint(m, 4)
+                            if (5 + plen <= m.size) currentApp = String(m, 5, plen, Charsets.UTF_8)
+                        }
                         tag == 194 && m.size >= 5 && (m[1].toInt() and 0xFF) == 2 -> {
                             poweredOn = m[m.size - 1].toInt() != 0
                         }
@@ -306,6 +314,11 @@ class TvRemote(private val ctx: Context) {
         try { sock?.close() } catch (_: Exception) {}
         sock = null
         ready = false
+    }
+
+    /** Bağlantıyı açık tutar, durum ve açık uygulama bilgisini günceller */
+    fun connect(host: String) {
+        ensureConnected(host)
     }
 
     fun key(host: String, code: Int) {

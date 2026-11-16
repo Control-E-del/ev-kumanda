@@ -22,15 +22,20 @@ object K {
     const val PS5_IP = "ps5_ip"
     const val PS5_CRED = "ps5_cred"
     const val TV_PAIRED = "tv_paired"
+    const val THEME = "theme"
 
-    val all = listOf(PC_IP, PC_MAC, PC_USER, PC_PASS, PC_CMD, TV_IP, TV_MAC, PS5_IP, PS5_CRED)
+    val all = listOf(PC_IP, PC_MAC, PC_USER, PC_PASS, PC_CMD, TV_IP, TV_MAC, PS5_IP, PS5_CRED, THEME)
 }
 
 class Prefs(ctx: Context) {
     private val sp = ctx.getSharedPreferences("evkumanda", Context.MODE_PRIVATE)
 
     fun get(key: String): String {
-        val def = if (key == K.PC_CMD) "shutdown /s /t 0" else ""
+        val def = when (key) {
+            K.PC_CMD -> "shutdown /s /t 0"
+            K.THEME -> "kirmizi"
+            else -> ""
+        }
         return sp.getString(key, def) ?: def
     }
 

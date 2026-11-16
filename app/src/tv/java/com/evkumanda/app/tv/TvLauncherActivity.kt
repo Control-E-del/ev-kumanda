@@ -55,6 +55,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -83,7 +84,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.evkumanda.app.Ps5
 import com.evkumanda.app.Wol
 import kotlinx.coroutines.Dispatchers
@@ -270,7 +274,7 @@ fun LauncherRoot(act: TvLauncherActivity) {
             if (s == "apps") {
                 AllAppsScreen(ctx, accent)
             } else {
-                HomeScreen(ctx, cfg, accent, onAllApps = { screen = "apps" })
+                HomeScreen(act, ctx, cfg, accent, onAllApps = { screen = "apps" })
             }
         }
     }
@@ -287,7 +291,7 @@ private class Entry(
 )
 
 @Composable
-fun HomeScreen(ctx: Context, cfg: TvConfig, accent: Color, onAllApps: () -> Unit) {
+fun HomeScreen(act: ComponentActivity, ctx: Context, cfg: TvConfig, accent: Color, onAllApps: () -> Unit) {
     val heroes = remember(cfg.heroes) { cfg.heroes.filter { it.image.isNotBlank() } }
     var idx by remember { mutableIntStateOf(0) }
     LaunchedEffect(heroes.size) {
@@ -304,13 +308,23 @@ fun HomeScreen(ctx: Context, cfg: TvConfig, accent: Color, onAllApps: () -> Unit
         label = "z",
     )
 
+    var hdmi by remember { mutableStateOf(emptyList<HdmiInput>()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            hdmi = withContext(Dispatchers.IO) { hdmiInputs(ctx) }
+            delay(5000)
+        }
+    }
+
     val hero = heroes.getOrNull(idx)
     val dateFmt = remember { SimpleDateFormat("d MMMM EEEE", Locale("tr")) }
     val title = hero?.title?.ifBlank { null } ?: if (heroes.isEmpty()) greeting(cfg.userName) else ""
     val subtitle = hero?.subtitle?.ifBlank { null } ?: if (heroes.isEmpty()) dateFmt.format(Date()) else ""
 
     Box(Modifier.fillMaxSize().background(Color(0xFF05070D))) {
-        if (heroes.isEmpty()) {
+        if (cfg.homeVideo.isNotBlank() && File(TvStore.mediaDir(ctx), cfg.homeVideo).exists()) {
+            HomeVideo(act, cfg.homeVideo)
+        } else if (heroes.isEmpty()) {
             AnimatedGradient(accent)
         } else {
             Crossfade(targetState = idx.coerceIn(0, heroes.size - 1), animationSpec = tween(1400), label = "hero") { i ->
@@ -342,7 +356,7 @@ fun HomeScreen(ctx: Context, cfg: TvConfig, accent: Color, onAllApps: () -> Unit
                     Pill("▶  Aç", accent) { if (!launchPkg(ctx, hero.pkg)) toast(ctx, "Uygulama yüklü değil") }
                 }
                 Spacer(Modifier.height(26.dp))
-                AppRow(ctx, cfg, accent, onAllApps)
+                AppRow(ctx, cfg, hdmi, accent, onAllApps)
             }
             Spacer(Modifier.width(36.dp))
             Column(
@@ -359,9 +373,9 @@ fun HomeScreen(ctx: Context, cfg: TvConfig, accent: Color, onAllApps: () -> Unit
 }
 
 @Composable
-private fun AppRow(ctx: Context, cfg: TvConfig, accent: Color, onAllApps: () -> Unit) {
+private fun AppRow(ctx: Context, cfg: TvConfig, hdmi: List<HdmiInput>, accent: Color, onAllApps: () -> Unit) {
     val pm = ctx.packageManager
-    val entries = remember(cfg.pinned) {
+    val entries = remember(cfg.pinned, hdmi) {
         val list = ArrayList<Entry>()
         list.add(Entry("Play Store", "com.android.vending", "▶", Color(0xFF1E88E5)) {
             if (!launchPkg(ctx, "com.android.vending")) openMarket(ctx, "com.android.vending")
@@ -377,6 +391,11 @@ private fun AppRow(ctx: Context, cfg: TvConfig, accent: Color, onAllApps: () -> 
             if (label != null && (pm.getLaunchIntentForPackage(p) != null || pm.getLeanbackLaunchIntentForPackage(p) != null)) {
                 list.add(Entry(label, p, null, Color(0xFF3A3F5C)) { launchPkg(ctx, p) })
             }
+        }
+        for (h in hdmi) {
+            list.add(Entry(h.label, null, "🔌", Color(0xFF2E7D6B)) {
+                if (!openHdmi(ctx, h.id)) toast(ctx, "Giriş açılamadı")
+            })
         }
         list.add(Entry("Dosyalar", null, "📁", Color(0xFFFFA726)) { openFiles(ctx) })
         list.add(Entry("Ayarlar", null, "⚙️", Color(0xFF607D8B)) { openSettings(ctx) })
@@ -404,6 +423,30 @@ private fun AppRow(ctx: Context, cfg: TvConfig, accent: Color, onAllApps: () -> 
 }
 
 // ---------------------------------------------------------------- görsel parçalar
+
+@Composable
+private fun HomeVideo(act: ComponentActivity, name: String) {
+    val f = remember(name) { File(TvStore.mediaDir(act), name) }
+    val holder = remember { arrayOfNulls<SeamlessVideoView>(1) }
+    DisposableEffect(Unit) {
+        val obs = LifecycleEventObserver { _, ev ->
+            if (ev == Lifecycle.Event.ON_STOP) holder[0]?.pause()
+            else if (ev == Lifecycle.Event.ON_START) holder[0]?.start()
+        }
+        act.lifecycle.addObserver(obs)
+        onDispose { act.lifecycle.removeObserver(obs) }
+    }
+    AndroidView(
+        factory = { c ->
+            val v = SeamlessVideoView(c, f)
+            holder[0] = v
+            v.start()
+            v
+        },
+        modifier = Modifier.fillMaxSize(),
+        onRelease = { it.release() },
+    )
+}
 
 @Composable
 private fun HeroImage(ctx: Context, name: String, zoom: Float) {

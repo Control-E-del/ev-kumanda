@@ -40,6 +40,8 @@ button.ghost{background:rgba(255,255,255,.1)}button.red{background:#c0392b}
 <div class="row"><div><label>Adın</label><input id="userName"></div><div><label>Vurgu rengi</label><input id="accent" type="color"></div></div></div>
 
 <div class="card"><h2>Ana ekran afişleri</h2><p class="hint">Büyük afiş görselleri (16:9 yatay en iyisi). Sırayla döner. İstersen bir afişe uygulama bağla, tıklayınca o açılır.</p>
+<label>Ana ekran arka plan videosu (seçilirse afiş görselleri yerine döngüde oynar)</label><select id="homeVideo"></select>
+<div class="row" style="margin:8px 0 14px"><button class="ghost" onclick="pick('vid-')">Video yükle (mp4)</button></div>
 <div id="heroes"></div>
 <div class="row"><button class="ghost" onclick="addHero()">+ Afiş ekle</button>
 <button class="ghost" onclick="pick('hero-')">Afiş görseli yükle</button></div>
@@ -83,9 +85,11 @@ function render(){
  var c=S.cfg;
  ['userName','accent','idleMin','saverInterval','city','lat','lon','cdTitle','cdDate','pcIp','pcMac','ps5Ip','ps5Cred'].forEach(function(k){g(k).value=c[k]==null?'':c[k]});
  g('saverMode').value=c.saverMode;g('saverClock').checked=!!c.saverClock;
- var vs=g('saverVideo');vs.innerHTML='<option value="">(yok)</option>';
- S.media.filter(function(m){return /^vid-/.test(m.name)}).forEach(function(m){var o=document.createElement('option');o.value=m.name;o.textContent=m.name;vs.appendChild(o)});
- vs.value=c.saverVideo||'';
+ ['saverVideo','homeVideo'].forEach(function(id){
+  var vs=g(id);vs.innerHTML='<option value="">(yok)</option>';
+  S.media.filter(function(m){return /^vid-/.test(m.name)}).forEach(function(m){var o=document.createElement('option');o.value=m.name;o.textContent=m.name;vs.appendChild(o)});
+  vs.value=c[id]||'';
+ });
  renderHeroes();renderThumbs();renderApps();
 }
 function thumbHtml(m){return '<div class="th"><img src="/media/'+encodeURIComponent(m.name)+'"><span>'+m.name.slice(0,18)+'</span><b onclick="del(\''+m.name+'\')">×</b></div>'}
@@ -144,7 +148,7 @@ function save(){
  ['userName','accent','city','cdTitle','cdDate','pcIp','pcMac','ps5Ip','ps5Cred'].forEach(function(k){c[k]=g(k).value});
  c.idleMin=parseInt(g('idleMin').value||'0');c.saverInterval=parseInt(g('saverInterval').value||'12');
  c.lat=parseFloat(g('lat').value||'0');c.lon=parseFloat(g('lon').value||'0');
- c.saverMode=g('saverMode').value;c.saverClock=g('saverClock').checked;c.saverVideo=g('saverVideo').value;
+ c.saverMode=g('saverMode').value;c.saverClock=g('saverClock').checked;c.saverVideo=g('saverVideo').value;c.homeVideo=g('homeVideo').value;
  fetch('/api/config',{method:'POST',body:JSON.stringify(c)}).then(function(r){return r.text()}).then(function(t){toast(t=='ok'?'Kaydedildi ✓':t)});
 }
 load();
