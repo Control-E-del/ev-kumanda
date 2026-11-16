@@ -40,7 +40,7 @@ button.ghost{background:rgba(255,255,255,.1)}button.red{background:#c0392b}
 <div class="row"><div><label>Adın</label><input id="userName"></div><div><label>Vurgu rengi</label><input id="accent" type="color"></div></div></div>
 
 <div class="card"><h2>Ana ekran afişleri</h2><p class="hint">Büyük afiş görselleri (16:9 yatay en iyisi). Sırayla döner. İstersen bir afişe uygulama bağla, tıklayınca o açılır.</p>
-<label>Ana ekran arka plan videosu (seçilirse afiş görselleri yerine döngüde oynar)</label><select id="homeVideo"></select>
+<div class="hint" id="free"></div><label>Ana ekran arka plan videosu (seçilirse afiş görselleri yerine döngüde oynar)</label><select id="homeVideo"></select>
 <div class="row" style="margin:8px 0 14px"><button class="ghost" onclick="pick('vid-')">Video yükle (mp4)</button></div>
 <div id="heroes"></div>
 <div class="row"><button class="ghost" onclick="addHero()">+ Afiş ekle</button>
@@ -90,6 +90,7 @@ function render(){
   S.media.filter(function(m){return /^vid-/.test(m.name)}).forEach(function(m){var o=document.createElement('option');o.value=m.name;o.textContent=m.name;vs.appendChild(o)});
   vs.value=c[id]||'';
  });
+ if(S.free!=null)g('free').textContent='TV boş alan: '+(S.free/1e9).toFixed(1)+' GB. 4K için H.265 (HEVC) 3840x2160, 30 fps önerilir.';
  renderHeroes();renderThumbs();renderApps();
 }
 function thumbHtml(m){return '<div class="th"><img src="/media/'+encodeURIComponent(m.name)+'"><span>'+m.name.slice(0,18)+'</span><b onclick="del(\''+m.name+'\')">×</b></div>'}

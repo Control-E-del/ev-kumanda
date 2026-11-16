@@ -2,6 +2,8 @@ package com.evkumanda.app.tv
 
 import android.content.Context
 import android.content.Intent
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedInputStream
@@ -43,6 +45,7 @@ object WebPanel {
             if (started) return
             started = true
         }
+        registerNsd(ctx)
         thread(isDaemon = true, name = "evtv-web") {
             try {
                 val ss = ServerSocket(PORT)
@@ -61,6 +64,36 @@ object WebPanel {
                 synchronized(this) { started = false }
             }
         }
+    }
+
+    /** Tablet uygulaması TV'yi bulabilsin diye ağda "_evtv._tcp" olarak duyurulur */
+    private fun registerNsd(ctx: Context) {
+        try {
+            val nsd = ctx.getSystemService(Context.NSD_SERVICE) as NsdManager
+            val info = NsdServiceInfo()
+            info.serviceName = "EvTV"
+            info.serviceType = "_evtv._tcp."
+            info.port = PORT
+            nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, object : NsdManager.RegistrationListener {
+                override fun onServiceRegistered(i: NsdServiceInfo?) {}
+                override fun onRegistrationFailed(i: NsdServiceInfo?, e: Int) {}
+                override fun onServiceUnregistered(i: NsdServiceInfo?) {}
+                override fun onUnregistrationFailed(i: NsdServiceInfo?, e: Int) {}
+            })
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Okunabiliyorsa TV'nin MAC adresi (Android 10+ çoğu cihazda engelli, bu durumda boş döner) */
+    private fun readMac(): String {
+        for (n in listOf("eth0", "wlan0")) {
+            try {
+                val t = File("/sys/class/net/$n/address").readText().trim()
+                if (t.length == 17 && t != "00:00:00:00:00:00" && t != "02:00:00:00:00:00") return t
+            } catch (_: Exception) {
+            }
+        }
+        return ""
     }
 
     private fun readLine(inp: InputStream): String? {
@@ -158,11 +191,22 @@ object WebPanel {
                     media.put(JSONObject().put("name", it.name).put("size", it.length()))
                 }
                 o.put("media", media)
+                o.put("free", dir.usableSpace)
                 val apps = JSONArray()
                 installedApps(ctx).forEach { apps.put(JSONObject().put("pkg", it.pkg).put("label", it.label)) }
                 o.put("apps", apps)
                 respond(out, 200, "application/json; charset=utf-8", o.toString().toByteArray(Charsets.UTF_8))
             }
+
+            method == "GET" && path == "/api/info" -> {
+                val o = JSONObject()
+                o.put("name", android.os.Build.MODEL ?: "TV")
+                o.put("mac", readMac())
+                respond(out, 200, "application/json; charset=utf-8", o.toString().toByteArray(Charsets.UTF_8))
+            }
+
+            method == "PUT" && path == "/api/upload" && len > dir.usableSpace - 300_000_000L ->
+                respond(out, 507, "text/plain", "TV'de yeterli boş alan yok".toByteArray())
 
             method == "PUT" && path == "/api/upload" -> {
                 val f = File(dir, safeName(query["name"] ?: "file"))

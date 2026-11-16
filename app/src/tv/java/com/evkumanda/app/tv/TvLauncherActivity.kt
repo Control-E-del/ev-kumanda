@@ -439,6 +439,7 @@ private fun HomeVideo(act: ComponentActivity, name: String) {
     AndroidView(
         factory = { c ->
             val v = SeamlessVideoView(c, f)
+            v.onError = { m -> toast(act.applicationContext, m) }
             holder[0] = v
             v.start()
             v

@@ -135,6 +135,8 @@ fun App(ctx: Context) {
     var msg by remember { mutableStateOf("") }
     var pcUp by remember { mutableStateOf<Boolean?>(null) }
     var tvUp by remember { mutableStateOf<Boolean?>(null) }
+    var ps5Up by remember { mutableStateOf<Boolean?>(null) }
+    var finding by remember { mutableStateOf(false) }
     var nowApp by remember { mutableStateOf<String?>(null) }
     var tvOnState by remember { mutableStateOf<Boolean?>(null) }
     var selectedTile by remember { mutableStateOf("") }
@@ -170,12 +172,54 @@ fun App(ctx: Context) {
     fun tvOff() = tv.powerOff(prefs.get(K.TV_IP))
     fun ps5On() = Ps5.wake(prefs.get(K.PS5_IP), prefs.get(K.PS5_CRED))
 
+    /** Ağdaki cihazları bulur. Boş alanları doldurur; [force] ise bulunanla üzerine yazar. */
+    fun discover(force: Boolean) {
+        if (finding) return
+        finding = true
+        scope.launch {
+            try {
+                val f = withContext(Dispatchers.IO) { Discovery.all(ctx) }
+                fun set(key: String, v: String) {
+                    if (v.isNotBlank() && (force || prefs.get(key).isBlank())) prefs.put(key, v)
+                }
+                set(K.TV_IP, f.tvIp); set(K.TV_MAC, f.tvMac)
+                set(K.PS5_IP, f.ps5Ip)
+                set(K.PC_IP, f.pcIp)
+                val parts = buildList {
+                    if (f.tvIp.isNotBlank()) add("TV ${f.tvIp}")
+                    if (f.ps5Ip.isNotBlank()) add("PS5 ${f.ps5Ip}")
+                    if (f.pcIp.isNotBlank()) add("PC ${f.pcIp}")
+                }
+                msg = if (parts.isEmpty()) "Cihaz bulunamadı. Hepsi aynı Wi-Fi'de ve açık mı?" else "Bulundu: " + parts.joinToString(", ")
+            } catch (e: Exception) {
+                msg = "Arama başarısız: ${e.message ?: e.javaClass.simpleName}"
+            } finally {
+                finding = false
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
+        // İlk açılışta eksik IP'leri otomatik bul
+        if (prefs.get(K.TV_IP).isBlank() || prefs.get(K.PC_IP).isBlank() || prefs.get(K.PS5_IP).isBlank()) discover(false)
+        var tvDown = 0
         while (true) {
             val pcIp = prefs.get(K.PC_IP)
             val tvIp = prefs.get(K.TV_IP)
             pcUp = if (pcIp.isBlank()) null else withContext(Dispatchers.IO) { Net.up(pcIp, intArrayOf(22, 3389, 445, 135)) }
             tvUp = if (tvIp.isBlank()) null else withContext(Dispatchers.IO) { Net.up(tvIp, intArrayOf(6466, 8009, 8008)) }
+            val psIp = prefs.get(K.PS5_IP)
+            ps5Up = if (psIp.isBlank()) null else withContext(Dispatchers.IO) { Discovery.ps5Alive(psIp) }
+            // TV'nin IP'si (DHCP) değiştiyse yeniden bul
+            if (tvIp.isNotBlank() && tvUp == false) tvDown++ else tvDown = 0
+            if (tvDown >= 4) {
+                tvDown = 0
+                val n = withContext(Dispatchers.IO) { Discovery.findTv(ctx) }
+                if (n != null && n != tvIp) {
+                    prefs.put(K.TV_IP, n)
+                    msg = "TV'nin IP adresi değişmiş, güncellendi: $n"
+                }
+            }
             if (screen == "remote" && tvIp.isNotBlank() && tvUp == true) {
                 withContext(Dispatchers.IO) {
                     try { tv.connect(tvIp) } catch (_: Exception) {}
@@ -203,7 +247,7 @@ fun App(ctx: Context) {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
                 when (screen) {
-                    "settings" -> SettingsScreen(prefs, theme, msg,
+                    "settings" -> SettingsScreen(prefs, theme, msg, finding, onFind = { discover(true) },
                         onBack = {
                             themeKey = prefs.get(K.THEME)
                             screen = "home"
@@ -224,7 +268,7 @@ fun App(ctx: Context) {
                     )
 
                     "home" -> HomeScreen(
-                        theme = theme, msg = msg, pcUp = pcUp, tvUp = tvUp,
+                        theme = theme, msg = msg, pcUp = pcUp, tvUp = tvUp, ps5Up = ps5Up,
                         onSettings = { screen = "settings" },
                         onTvPanel = {
                             val ip = prefs.get(K.TV_IP)
@@ -522,6 +566,7 @@ private fun HomeScreen(
     msg: String,
     pcUp: Boolean?,
     tvUp: Boolean?,
+    ps5Up: Boolean?,
     onSettings: () -> Unit,
     onTvPanel: () -> Unit,
     onPcOn: () -> Unit,
@@ -554,7 +599,7 @@ private fun HomeScreen(
 
         Text("Cihazlar", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         DeviceCard("🖥️", "Bilgisayar", "Wake-on-LAN ile aç, SSH ile kapat", pcUp, onPcOn, onPcOff)
-        DeviceCard("🎮", "PlayStation 5", "Uyandır. Kapatma: TV ile (HDMI-CEC)", null, onPsOn, null)
+        DeviceCard("🎮", "PlayStation 5", "Uyandır. Kapatma: TV ile (HDMI-CEC)", ps5Up, onPsOn, null)
         DeviceCard("📺", "TV arayüzü", "Afiş, video, ekran koruyucu ayarları", tvUp, onTvPanel, null, onLabel = "Paneli aç")
 
         if (msg.isNotBlank()) {
@@ -628,7 +673,7 @@ private fun DeviceCard(
 // ---------------------------------------------------------------- ayarlar
 
 @Composable
-private fun SettingsScreen(prefs: Prefs, theme: Theme, msg: String, onBack: () -> Unit, onPair: () -> Unit) {
+private fun SettingsScreen(prefs: Prefs, theme: Theme, msg: String, finding: Boolean, onFind: () -> Unit, onBack: () -> Unit, onPair: () -> Unit) {
     val s = remember {
         mutableStateMapOf<String, String>().apply { K.all.forEach { put(it, prefs.get(it)) } }
     }
@@ -647,6 +692,16 @@ private fun SettingsScreen(prefs: Prefs, theme: Theme, msg: String, onBack: () -
 
     fun save() {
         K.all.forEach { prefs.put(it, s[it] ?: "") }
+    }
+
+    // Arama bitince bulunan değerleri alanlara yansıt
+    LaunchedEffect(finding) {
+        if (!finding) {
+            for (k in listOf(K.TV_IP, K.TV_MAC, K.PS5_IP, K.PC_IP)) {
+                val v = prefs.get(k)
+                if (v.isNotBlank()) s[k] = v
+            }
+        }
     }
 
     Column(
@@ -671,6 +726,16 @@ private fun SettingsScreen(prefs: Prefs, theme: Theme, msg: String, onBack: () -
                 ) { Text(t.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
             }
         }
+
+        Button(
+            onClick = { save(); onFind() }, enabled = !finding, modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = theme.accent, contentColor = Color.White),
+        ) { Text(if (finding) "Ağ taranıyor…" else "🔍 Ağdaki cihazları otomatik bul") }
+        Text(
+            "TV, PS5 ve bilgisayarı aynı Wi-Fi'de kendisi bulur; IP'leri elle girmen gerekmez. PC'nin MAC adresi " +
+                "Android tarafından okunamaz, bir kez Windows'ta 'ipconfig /all' ile bakıp gir.",
+            color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp,
+        )
 
         Text("📺 Google TV", color = Color.White, fontWeight = FontWeight.SemiBold)
         Field("TV IP adresi (ör. 192.168.1.20)", K.TV_IP)

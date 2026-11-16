@@ -187,6 +187,7 @@ class SaverView(ctx: Context, private val cfg: TvConfig) : FrameLayout(ctx) {
         val f = File(TvStore.mediaDir(context), cfg.saverVideo)
         if (cfg.saverVideo.isBlank() || !f.exists()) return false
         val v = SeamlessVideoView(context, f)
+        v.onError = { m -> android.widget.Toast.makeText(context, m, android.widget.Toast.LENGTH_LONG).show() }
         addView(v, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         video = v
         return true
