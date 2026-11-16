@@ -60,11 +60,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+import java.util.Locale
 
 // ---------------------------------------------------------------- tema
 
@@ -76,6 +90,12 @@ private val Themes = listOf(
     Theme("mavi", "Mavi", Color(0xFF2F80ED), Color(0xFF123E8A), Color(0xFF071329), Color(0xFF5AA2FF)),
     Theme("yesil", "Yeşil", Color(0xFF1FB36B), Color(0xFF0E5B3A), Color(0xFF051F15), Color(0xFF3DDC97)),
 )
+
+@Composable
+private fun isLandscape(): Boolean {
+    val c = LocalConfiguration.current
+    return c.screenWidthDp > c.screenHeightDp
+}
 
 private fun themeOf(k: String): Theme = Themes.firstOrNull { it.key == k } ?: Themes[0]
 
@@ -310,6 +330,8 @@ fun App(ctx: Context) {
                         },
                     )
 
+                    "calendar" -> CalendarScreen(theme, prefs)
+
                     else -> RemoteScreen(
                         theme = theme, msg = msg, tvUp = tvUp, tvOnState = tvOnState, nowApp = nowApp,
                         selected = selectedTile,
@@ -374,22 +396,24 @@ fun App(ctx: Context) {
 
 @Composable
 private fun BottomTabs(current: String, theme: Theme, onSelect: (String) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.Center,
-    ) {
-        Row(Modifier.glass(RoundedCornerShape(50), 0.14f).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for ((id, label) in listOf("remote" to "📺  Kumanda", "home" to "🏠  Ev")) {
+    val land = isLandscape()
+    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = if (land) 6.dp else 12.dp), contentAlignment = Alignment.Center) {
+        Row(
+            Modifier.widthIn(max = 460.dp).fillMaxWidth().glass(RoundedCornerShape(50), 0.14f).padding(5.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            for ((id, label) in listOf("remote" to "📺 Kumanda", "calendar" to "📅 Takvim", "home" to "🏠 Ev")) {
                 val sel = current == id
                 Box(
                     Modifier
+                        .weight(1f)
                         .clip(RoundedCornerShape(50))
                         .background(if (sel) Color.White.copy(alpha = 0.22f) else Color.Transparent)
                         .clickable { onSelect(id) }
-                        .padding(horizontal = 26.dp, vertical = 12.dp),
+                        .padding(vertical = if (land) 8.dp else 11.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(label, color = Color.White, fontSize = 15.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium)
+                    Text(label, color = Color.White, fontSize = 14.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
                 }
             }
         }
@@ -411,10 +435,8 @@ private fun RemoteScreen(
     onTile: (AppTile) -> Unit,
 ) {
     val connected = tvUp == true
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
+    val land = isLandscape()
+    val header: @Composable () -> Unit = {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Row(
                 Modifier.glass(RoundedCornerShape(50), 0.14f).padding(horizontal = 16.dp, vertical = 10.dp),
@@ -433,6 +455,8 @@ private fun RemoteScreen(
             ) { Text("⏻", color = Color.White, fontSize = 20.sp) }
         }
 
+    }
+    val nowCard: @Composable () -> Unit = {
         // Şimdi TV'de
         Row(
             Modifier.fillMaxWidth().glass(RoundedCornerShape(26.dp), 0.12f).padding(14.dp),
@@ -459,6 +483,8 @@ private fun RemoteScreen(
             }
         }
 
+    }
+    val tileRow: @Composable () -> Unit = {
         // Uygulama kartları
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(Tiles) { t ->
@@ -476,6 +502,8 @@ private fun RemoteScreen(
             }
         }
 
+    }
+    val dpad: @Composable () -> Unit = {
         // Yön tuşları
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -499,6 +527,8 @@ private fun RemoteScreen(
             }
         }
 
+    }
+    val volume: @Composable () -> Unit = {
         // Ses
         Row(
             Modifier.fillMaxWidth().glass(RoundedCornerShape(50), 0.13f).padding(8.dp),
@@ -509,8 +539,33 @@ private fun RemoteScreen(
             HoldBtn("+") { onKey(TvRemote.KEY_VOL_UP) }
         }
 
+    }
+    val msgLine: @Composable () -> Unit = {
         if (msg.isNotBlank()) {
             Text(msg, color = if (msg.contains("başarısız") || msg.contains("Hata")) Bad else Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+        }
+    }
+    if (land) {
+        Row(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Column(
+                Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                header(); nowCard(); tileRow(); msgLine()
+            }
+            Column(
+                Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+            ) {
+                dpad(); volume()
+            }
+        }
+    } else {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            header(); nowCard(); tileRow(); dpad(); volume(); msgLine()
         }
     }
 }
@@ -598,9 +653,22 @@ private fun HomeScreen(
         }
 
         Text("Cihazlar", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        DeviceCard("🖥️", "Bilgisayar", "Wake-on-LAN ile aç, SSH ile kapat", pcUp, onPcOn, onPcOff)
-        DeviceCard("🎮", "PlayStation 5", "Uyandır. Kapatma: TV ile (HDMI-CEC)", ps5Up, onPsOn, null)
-        DeviceCard("📺", "TV arayüzü", "Afiş, video, ekran koruyucu ayarları", tvUp, onTvPanel, null, onLabel = "Paneli aç")
+        val cards: List<@Composable () -> Unit> = listOf(
+            { DeviceCard("🖥️", "Bilgisayar", "Wake-on-LAN ile aç, SSH ile kapat", pcUp, onPcOn, onPcOff) },
+            { DeviceCard("🎮", "PlayStation 5", "Uyandır. Kapatma: TV ile (HDMI-CEC)", ps5Up, onPsOn, null) },
+            { DeviceCard("📺", "TV arayüzü", "Afiş, video, ekran koruyucu, takvim", tvUp, onTvPanel, null, onLabel = "Paneli aç") },
+        )
+        if (isLandscape()) {
+            // Yatayda iki sütun
+            for (pair in cards.chunked(2)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    for (c in pair) Box(Modifier.weight(1f)) { c() }
+                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        } else {
+            cards.forEach { it() }
+        }
 
         if (msg.isNotBlank()) {
             Text(msg, color = if (msg.contains("başarısız") || msg.contains("başlatılamadı")) Bad else Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
@@ -776,5 +844,240 @@ private fun SettingsScreen(prefs: Prefs, theme: Theme, msg: String, finding: Boo
             colors = ButtonDefaults.buttonColors(containerColor = theme.accent, contentColor = Color.White),
         ) { Text("Kaydet") }
         Text(msg, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+    }
+}
+
+// ---------------------------------------------------------------- takvim
+
+private data class CalItem(val id: String, val title: String, val date: String, val time: String)
+
+/** TV'deki Ev TV uygulamasının takvim uçları (port 8765) */
+private object TvCal {
+    private fun conn(ip: String, path: String, method: String): HttpURLConnection {
+        val c = URL("http://$ip:8765$path").openConnection() as HttpURLConnection
+        c.requestMethod = method
+        c.connectTimeout = 3000
+        c.readTimeout = 5000
+        return c
+    }
+
+    fun list(ip: String): List<CalItem> {
+        val t = conn(ip, "/api/events", "GET").inputStream.bufferedReader().readText()
+        val a = JSONArray(t)
+        return (0 until a.length()).map {
+            val o = a.getJSONObject(it)
+            CalItem(o.optString("id"), o.optString("title"), o.optString("date"), o.optString("time"))
+        }
+    }
+
+    fun add(ip: String, e: CalItem) {
+        val c = conn(ip, "/api/events/add", "POST")
+        c.doOutput = true
+        val body = JSONObject().put("id", e.id).put("title", e.title).put("date", e.date).put("time", e.time).toString().toByteArray(Charsets.UTF_8)
+        c.setFixedLengthStreamingMode(body.size)
+        c.outputStream.use { it.write(body) }
+        val code = c.responseCode
+        if (code != 200) throw Exception(c.errorStream?.bufferedReader()?.readText() ?: "HTTP $code")
+    }
+
+    fun delete(ip: String, id: String) {
+        val c = conn(ip, "/api/events/delete?id=" + URLEncoder.encode(id, "UTF-8"), "POST")
+        c.doOutput = true
+        c.setFixedLengthStreamingMode(0)
+        c.outputStream.close()
+        c.responseCode
+    }
+}
+
+private fun daysLeft(date: String): Int? = try {
+    ChronoUnit.DAYS.between(LocalDate.now(), LocalDate.parse(date)).toInt()
+} catch (_: Exception) {
+    null
+}
+
+private fun whenLabel(n: Int?): String = when {
+    n == null -> ""
+    n < 0 -> "Geçti"
+    n == 0 -> "Bugün"
+    n == 1 -> "Yarın"
+    else -> "$n gün kaldı"
+}
+
+@Composable
+private fun CalendarScreen(theme: Theme, prefs: Prefs) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val items = remember { mutableStateListOf<CalItem>() }
+    var info by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var date by remember { mutableStateOf(LocalDate.now().toString()) }
+    var time by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    val ip = prefs.get(K.TV_IP)
+
+    fun refresh() {
+        if (ip.isBlank()) {
+            info = "Önce Ev › ⚙ Ayarlar'dan TV'yi bul (Otomatik bul)."
+            return
+        }
+        scope.launch {
+            try {
+                val l = withContext(Dispatchers.IO) { TvCal.list(ip) }
+                items.clear()
+                items.addAll(l.filter { (daysLeft(it.date) ?: 0) >= 0 }.sortedBy { it.date + it.time })
+                info = ""
+            } catch (e: Exception) {
+                info = "TV'ye ulaşılamadı. TV açık ve Ev TV ana ekranı çalışıyor mu?"
+            }
+        }
+    }
+    LaunchedEffect(Unit) { refresh() }
+
+    fun pickDate() {
+        val d = try { LocalDate.parse(date) } catch (_: Exception) { LocalDate.now() }
+        android.app.DatePickerDialog(ctx, { _, y, m, day ->
+            date = LocalDate.of(y, m + 1, day).toString()
+        }, d.year, d.monthValue - 1, d.dayOfMonth).show()
+    }
+
+    fun pickTime() {
+        android.app.TimePickerDialog(ctx, { _, h, m ->
+            time = String.format(Locale.US, "%02d:%02d", h, m)
+        }, 20, 0, true).show()
+    }
+
+    val land = isLandscape()
+    val pad = if (land) 12.dp else 18.dp
+
+    @Composable
+    fun Chip(label: String, sel: Boolean, onClick: () -> Unit) {
+        Box(
+            Modifier.clip(RoundedCornerShape(50))
+                .background(if (sel) theme.accent else Color.White.copy(alpha = 0.14f))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 9.dp),
+        ) { Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+    }
+
+    val form: @Composable () -> Unit = {
+        Column(
+            Modifier.fillMaxWidth().glass(RoundedCornerShape(26.dp), 0.12f).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Yeni etkinlik", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            OutlinedTextField(
+                value = title, onValueChange = { title = it }, singleLine = true,
+                label = { Text("Ne var? (ör. Doktor, Doğum günü)") }, modifier = Modifier.fillMaxWidth(),
+            )
+            val today = LocalDate.now()
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Chip("Bugün", date == today.toString()) { date = today.toString() }
+                Chip("Yarın", date == today.plusDays(1).toString()) { date = today.plusDays(1).toString() }
+                Chip("1 hafta", date == today.plusDays(7).toString()) { date = today.plusDays(7).toString() }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val dl = try { LocalDate.parse(date).format(DateTimeFormatter.ofPattern("d MMMM yyyy", Locale("tr"))) } catch (_: Exception) { date }
+                Chip("📅 $dl", false) { pickDate() }
+                Chip(if (time.isBlank()) "🕒 Saat ekle" else "🕒 $time", false) { pickTime() }
+                if (time.isNotBlank()) Chip("✕", false) { time = "" }
+            }
+            Button(
+                onClick = {
+                    if (title.isBlank()) { info = "Bir başlık yaz"; return@Button }
+                    if (ip.isBlank()) { refresh(); return@Button }
+                    busy = true
+                    val e = CalItem(System.currentTimeMillis().toString(), title.trim(), date, time)
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { TvCal.add(ip, e) }
+                            title = ""
+                            time = ""
+                            info = "TV'ye eklendi ✓"
+                            refresh()
+                        } catch (ex: Exception) {
+                            info = "Eklenemedi: ${ex.message ?: "TV'ye ulaşılamadı"}"
+                        } finally {
+                            busy = false
+                        }
+                    }
+                },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = theme.accent, contentColor = Color.White),
+            ) { Text(if (busy) "Ekleniyor…" else "TV'ye ekle") }
+            if (info.isNotBlank()) Text(info, color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp)
+        }
+    }
+
+    val list: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Yaklaşanlar", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("↻ Yenile", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp, modifier = Modifier.clickable { refresh() }.padding(6.dp))
+            }
+            if (items.isEmpty()) {
+                Text("Henüz etkinlik yok. Eklediklerin TV ana ekranında görünür.", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+            }
+            for (e in items) {
+                val n = daysLeft(e.date)
+                Row(
+                    Modifier.fillMaxWidth().glass(RoundedCornerShape(20.dp), 0.10f).padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        Modifier.width(74.dp).clip(RoundedCornerShape(14.dp))
+                            .background(if (n == 0) theme.accent else Color.White.copy(alpha = 0.14f))
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            when (n) { 0 -> "Bugün"; 1 -> "Yarın"; null -> "?"; else -> "$n gün" },
+                            color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(e.title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1)
+                        Text(
+                            e.date + (if (e.time.isNotBlank()) "  ${e.time}" else "") + "  ·  " + whenLabel(n),
+                            color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp,
+                        )
+                    }
+                    Box(
+                        Modifier.size(36.dp).clip(CircleShape).clickable {
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) { TvCal.delete(ip, e.id) }
+                                    items.remove(e)
+                                } catch (_: Exception) {
+                                    info = "Silinemedi"
+                                }
+                            }
+                        },
+                        contentAlignment = Alignment.Center,
+                    ) { Text("✕", color = Color.White.copy(alpha = 0.7f), fontSize = 15.sp) }
+                }
+            }
+        }
+    }
+
+    if (land) {
+        Row(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = pad), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Takvim", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                form()
+            }
+            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) { list() }
+        }
+    } else {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = pad),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("Takvim", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Text("Eklediğin etkinlikler TV ana ekranında \"Bugün\", \"3 gün kaldı\" diye görünür.", color = Color.White.copy(alpha = 0.65f), fontSize = 14.sp)
+            form()
+            list()
+        }
     }
 }

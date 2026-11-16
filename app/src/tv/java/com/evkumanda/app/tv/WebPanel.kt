@@ -246,6 +246,37 @@ object WebPanel {
                 }
             }
 
+            method == "GET" && path == "/api/events" -> {
+                val arr = JSONArray()
+                TvStore.cfg.events.sortedWith(compareBy({ it.date }, { it.time })).forEach { arr.put(it.toJson()) }
+                respond(out, 200, "application/json; charset=utf-8", arr.toString().toByteArray(Charsets.UTF_8))
+            }
+
+            method == "POST" && path == "/api/events/add" -> {
+                try {
+                    val e = CalEvent.fromJson(JSONObject(String(readBody(inp, len), Charsets.UTF_8)))
+                    if (e.title.isBlank() || !e.date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) {
+                        respond(out, 400, "text/plain; charset=utf-8", "Başlık ve tarih gerekli".toByteArray())
+                    } else {
+                        val c = TvStore.cfg
+                        val today = java.time.LocalDate.now().minusDays(1).toString()
+                        // Geçmiş etkinlikleri temizle, yenisini ekle
+                        val list = c.events.filter { it.date >= today && it.id != e.id } + e
+                        TvStore.save(ctx, c.copy(events = list))
+                        respond(out, 200, "text/plain", "ok".toByteArray())
+                    }
+                } catch (ex: Exception) {
+                    respond(out, 400, "text/plain; charset=utf-8", ("Hatalı istek: " + ex.message).toByteArray())
+                }
+            }
+
+            method == "POST" && path == "/api/events/delete" -> {
+                val id = query["id"] ?: ""
+                val c = TvStore.cfg
+                TvStore.save(ctx, c.copy(events = c.events.filter { it.id != id }))
+                respond(out, 200, "text/plain", "ok".toByteArray())
+            }
+
             method == "GET" && path.startsWith("/media/") -> {
                 val f = File(dir, safeName(path.removePrefix("/media/")))
                 if (!f.exists()) {

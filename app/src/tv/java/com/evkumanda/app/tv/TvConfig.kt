@@ -8,6 +8,18 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+/** Takvim etkinliği. date: yyyy-MM-dd, time: "HH:mm" veya boş */
+data class CalEvent(val id: String, val title: String, val date: String, val time: String = "") {
+    fun toJson(): JSONObject = JSONObject().put("id", id).put("title", title).put("date", date).put("time", time)
+
+    companion object {
+        fun fromJson(o: JSONObject) = CalEvent(
+            o.optString("id").ifBlank { System.nanoTime().toString() },
+            o.optString("title"), o.optString("date"), o.optString("time"),
+        )
+    }
+}
+
 data class Hero(val image: String, val title: String, val subtitle: String, val pkg: String)
 
 /** Tüm TV arayüzü ayarları. Web panelinden düzenlenir, config.json olarak saklanır. */
@@ -31,6 +43,8 @@ data class TvConfig(
     val accent: String = "#8B6CFF",
     val saverVideo: String = "",
     val homeVideo: String = "",
+    val events: List<CalEvent> = emptyList(),
+    val usbAuto: Boolean = true,
 ) {
     fun toJson(): JSONObject {
         val o = JSONObject()
@@ -60,6 +74,8 @@ data class TvConfig(
         o.put("accent", accent)
         o.put("saverVideo", saverVideo)
         o.put("homeVideo", homeVideo)
+        o.put("events", JSONArray().apply { events.forEach { put(it.toJson()) } })
+        o.put("usbAuto", usbAuto)
         return o
     }
 
@@ -77,6 +93,9 @@ data class TvConfig(
             val pinned = ArrayList<String>()
             val pa = o.optJSONArray("pinned")
             if (pa != null) for (i in 0 until pa.length()) pinned.add(pa.optString(i))
+            val events = ArrayList<CalEvent>()
+            val ea = o.optJSONArray("events")
+            if (ea != null) for (i in 0 until ea.length()) ea.optJSONObject(i)?.let { e -> CalEvent.fromJson(e).takeIf { it.title.isNotBlank() && it.date.isNotBlank() }?.let { events.add(it) } }
             return TvConfig(
                 heroes = heroes,
                 pinned = pinned,
@@ -97,6 +116,8 @@ data class TvConfig(
                 accent = o.optString("accent", d.accent),
                 saverVideo = o.optString("saverVideo"),
                 homeVideo = o.optString("homeVideo"),
+                events = events,
+                usbAuto = o.optBoolean("usbAuto", d.usbAuto),
             )
         }
     }

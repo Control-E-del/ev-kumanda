@@ -1,6 +1,9 @@
 package com.evkumanda.app.tv
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -12,6 +15,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
@@ -58,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -111,10 +116,24 @@ class TvLauncherActivity : ComponentActivity() {
     @Volatile
     var lastInput: Long = System.currentTimeMillis()
 
+    private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        thread(isDaemon = true) { UsbMedia.rescan(applicationContext) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         TvStore.load(applicationContext)
         WebPanel.start(applicationContext)
+        UsbMedia.register(applicationContext)
+        // USB'deki videoları okuyabilmek için medya izni
+        val perms = if (Build.VERSION.SDK_INT >= 33) {
+            arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_IMAGES)
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        if (perms.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) {
+            try { permLauncher.launch(perms) } catch (_: Exception) {}
+        }
         setContent { LauncherRoot(this) }
     }
 
@@ -126,6 +145,7 @@ class TvLauncherActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         lastInput = System.currentTimeMillis()
+        thread(isDaemon = true) { UsbMedia.rescan(applicationContext) }
     }
 }
 
@@ -281,6 +301,8 @@ fun LauncherRoot(act: TvLauncherActivity) {
 }
 
 // ---------------------------------------------------------------- ana ekran
+// Not: TV'ler 1080p arayüzü yaklaşık 960x540 dp olarak çizer; ölçüler buna göre.
+// Sürekli çalışan animasyon yok (zayıf TV yongasında kasmasın diye); yalnızca odak animasyonu var.
 
 private class Entry(
     val label: String,
@@ -290,6 +312,30 @@ private class Entry(
     val action: () -> Unit,
 )
 
+/** Dakikada bir güncellenen saat */
+@Composable
+private fun rememberMinute(): Date {
+    var now by remember { mutableStateOf(Date()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = Date()
+            delay(60_000L - System.currentTimeMillis() % 60_000L + 50L)
+        }
+    }
+    return now
+}
+
+private fun runBg(ctx: Context, label: String, block: () -> Unit) {
+    thread {
+        try {
+            block()
+            toast(ctx, "$label ✓")
+        } catch (e: Exception) {
+            toast(ctx, "$label başarısız: ${e.message}")
+        }
+    }
+}
+
 @Composable
 fun HomeScreen(act: ComponentActivity, ctx: Context, cfg: TvConfig, accent: Color, onAllApps: () -> Unit) {
     val heroes = remember(cfg.heroes) { cfg.heroes.filter { it.image.isNotBlank() } }
@@ -297,76 +343,157 @@ fun HomeScreen(act: ComponentActivity, ctx: Context, cfg: TvConfig, accent: Colo
     LaunchedEffect(heroes.size) {
         idx = 0
         while (heroes.size > 1) {
-            delay(9000)
+            delay(10_000)
             idx = (idx + 1) % heroes.size
         }
     }
-    val inf = rememberInfiniteTransition(label = "zoom")
-    val zoom by inf.animateFloat(
-        1f, 1.07f,
-        infiniteRepeatable(tween(16000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "z",
-    )
 
     var hdmi by remember { mutableStateOf(emptyList<HdmiInput>()) }
     LaunchedEffect(Unit) {
         while (true) {
-            hdmi = withContext(Dispatchers.IO) { hdmiInputs(ctx) }
-            delay(5000)
+            val h = withContext(Dispatchers.IO) { hdmiInputs(ctx) }
+            if (h.map { it.id } != hdmi.map { it.id }) hdmi = h
+            delay(10_000)
         }
     }
 
+    val now = rememberMinute()
+    val usb = if (cfg.usbAuto) UsbMedia.video else null
+    val homeFile: File? = usb ?: cfg.homeVideo.takeIf { it.isNotBlank() }
+        ?.let { File(TvStore.mediaDir(ctx), it) }?.takeIf { it.exists() }
+
     val hero = heroes.getOrNull(idx)
     val dateFmt = remember { SimpleDateFormat("d MMMM EEEE", Locale("tr")) }
-    val title = hero?.title?.ifBlank { null } ?: if (heroes.isEmpty()) greeting(cfg.userName) else ""
-    val subtitle = hero?.subtitle?.ifBlank { null } ?: if (heroes.isEmpty()) dateFmt.format(Date()) else ""
+    val title = hero?.title?.ifBlank { null } ?: greeting(cfg.userName)
+    val subtitle = hero?.subtitle?.ifBlank { null } ?: dateFmt.format(now)
 
     Box(Modifier.fillMaxSize().background(Color(0xFF05070D))) {
-        if (cfg.homeVideo.isNotBlank() && File(TvStore.mediaDir(ctx), cfg.homeVideo).exists()) {
-            HomeVideo(act, cfg.homeVideo)
-        } else if (heroes.isEmpty()) {
-            AnimatedGradient(accent)
-        } else {
-            Crossfade(targetState = idx.coerceIn(0, heroes.size - 1), animationSpec = tween(1400), label = "hero") { i ->
-                HeroImage(ctx, heroes[i].image, zoom)
+        when {
+            homeFile != null -> key(homeFile.path) { HomeVideo(act, homeFile) }
+            heroes.isEmpty() -> StaticGradient(accent)
+            else -> Crossfade(targetState = idx.coerceIn(0, heroes.size - 1), animationSpec = tween(1200), label = "hero") { i ->
+                HeroImage(ctx, heroes[i].image)
             }
         }
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xE6000000), Color(0x55000000), Color.Transparent))))
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color(0xF2000000))))
+        // Yazılar okunsun diye sol ve alt karartma
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(0f to Color(0x66000000), 0.35f to Color.Transparent, 0.6f to Color(0x33000000), 1f to Color(0xEE000000)),
+            ),
+        )
 
-        Row(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 36.dp)) {
-            Column(Modifier.weight(1f).fillMaxHeight()) {
-                Entrance(0) {
-                    Text("Ev TV", color = Color.White.copy(alpha = 0.7f), fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                }
-                Spacer(Modifier.weight(1f))
-                Crossfade(targetState = Pair(title, subtitle), animationSpec = tween(700), label = "herotext") { ts ->
-                    val tt = ts.first
-                    val st = ts.second
-                    Column {
-                        Text(tt, color = Color.White, fontSize = 54.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        if (st.isNotBlank()) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(st, color = Color.White.copy(alpha = 0.8f), fontSize = 22.sp, fontWeight = FontWeight.Light)
+        Column(Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, top = 24.dp, bottom = 18.dp)) {
+            TopBar(cfg, now, accent)
+            Row(Modifier.weight(1f).fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) {
+                    Crossfade(targetState = Pair(title, subtitle), animationSpec = tween(600), label = "herotext") { ts ->
+                        Column {
+                            Text(ts.first, color = Color.White, fontSize = 40.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 44.sp)
+                            if (ts.second.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(ts.second, color = Color.White.copy(alpha = 0.8f), fontSize = 17.sp, fontWeight = FontWeight.Light)
+                            }
                         }
                     }
+                    if (hero != null && hero.pkg.isNotBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        Pill("▶  Aç", accent) { if (!launchPkg(ctx, hero.pkg)) toast(ctx, "Uygulama yüklü değil") }
+                    }
                 }
-                if (hero != null && hero.pkg.isNotBlank()) {
-                    Spacer(Modifier.height(18.dp))
-                    Pill("▶  Aç", accent) { if (!launchPkg(ctx, hero.pkg)) toast(ctx, "Uygulama yüklü değil") }
-                }
-                Spacer(Modifier.height(26.dp))
-                AppRow(ctx, cfg, hdmi, accent, onAllApps)
+                Spacer(Modifier.width(24.dp))
+                CalendarCard(cfg, now, accent, Modifier.width(290.dp))
             }
-            Spacer(Modifier.width(36.dp))
-            Column(
-                Modifier.width(310.dp).fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Entrance(100) { ClockCard(cfg) }
-                Entrance(220) { WeatherCard(cfg) }
-                Entrance(340) { CountdownCard(cfg, accent) }
-                Entrance(460) { ControlCard(ctx, cfg, accent) }
+            Spacer(Modifier.height(10.dp))
+            AppRow(ctx, cfg, hdmi, accent, onAllApps)
+        }
+    }
+}
+
+@Composable
+private fun TopBar(cfg: TvConfig, now: Date, accent: Color) {
+    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale("tr")) }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("Ev TV", color = Color.White.copy(alpha = 0.75f), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.weight(1f))
+        val us = UsbMedia.status
+        if (us.isNotBlank()) {
+            Text(
+                "💾 $us", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(end = 14.dp).width(260.dp),
+            )
+        }
+        Row(
+            Modifier.clip(RoundedCornerShape(50)).background(Color(0x33FFFFFF)).padding(horizontal = 16.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (Weather.temp.isNotBlank()) {
+                Text(Weather.emoji, fontSize = 16.sp)
+                Spacer(Modifier.width(6.dp))
+                Text("${Weather.temp}  ${cfg.city}", color = Color.White, fontSize = 15.sp)
+                Box(Modifier.padding(horizontal = 12.dp).size(width = 1.dp, height = 16.dp).background(Color(0x55FFFFFF)))
+            }
+            Text(timeFmt.format(now), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+private class Upcoming(val title: String, val days: Int, val time: String, val dateLabel: String)
+
+@Composable
+private fun CalendarCard(cfg: TvConfig, now: Date, accent: Color, modifier: Modifier) {
+    val dayKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(now)
+    val items = remember(cfg.events, cfg.cdTitle, cfg.cdDate, dayKey) {
+        val today = LocalDate.now()
+        val all = cfg.events.toMutableList()
+        if (cfg.cdTitle.isNotBlank() && cfg.cdDate.isNotBlank()) all.add(CalEvent("cd", cfg.cdTitle, cfg.cdDate))
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("d MMM", Locale("tr"))
+        all.mapNotNull { e ->
+            try {
+                val d = LocalDate.parse(e.date)
+                val n = ChronoUnit.DAYS.between(today, d).toInt()
+                if (n < 0) null else Pair(e.date + e.time, Upcoming(e.title, n, e.time, d.format(fmt)))
+            } catch (_: Exception) {
+                null
+            }
+        }.sortedBy { it.first }.map { it.second }.take(3)
+    }
+    val shape = RoundedCornerShape(22.dp)
+    Column(
+        modifier.clip(shape).background(Color(0x40101626)).border(1.dp, Color(0x29FFFFFF), shape).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("📅  Takvim", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            Text(SimpleDateFormat("d MMMM", Locale("tr")).format(now), color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+        }
+        if (items.isEmpty()) {
+            Text("Yaklaşan etkinlik yok.\nTelefondan Ev Kumanda › Takvim ile ekle.", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp, lineHeight = 18.sp)
+        }
+        for (u in items) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val badge = when (u.days) {
+                    0 -> "Bugün"
+                    1 -> "Yarın"
+                    else -> "${u.days} gün"
+                }
+                Box(
+                    Modifier.width(64.dp).clip(RoundedCornerShape(12.dp))
+                        .background(if (u.days == 0) accent else Color(0x26FFFFFF))
+                        .padding(vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text(badge, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(u.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val sub = when {
+                        u.days == 0 && u.time.isNotBlank() -> "Bugün ${u.time}"
+                        u.days == 0 -> "Bugün"
+                        u.days == 1 -> "Yarın" + (if (u.time.isNotBlank()) " ${u.time}" else "")
+                        else -> u.dateLabel + (if (u.time.isNotBlank()) " · ${u.time}" else "") + " · ${u.days} gün kaldı"
+                    }
+                    Text(sub, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1)
+                }
             }
         }
     }
@@ -375,7 +502,7 @@ fun HomeScreen(act: ComponentActivity, ctx: Context, cfg: TvConfig, accent: Colo
 @Composable
 private fun AppRow(ctx: Context, cfg: TvConfig, hdmi: List<HdmiInput>, accent: Color, onAllApps: () -> Unit) {
     val pm = ctx.packageManager
-    val entries = remember(cfg.pinned, hdmi) {
+    val entries = remember(cfg.pinned, hdmi, cfg.pcMac, cfg.ps5Ip) {
         val list = ArrayList<Entry>()
         list.add(Entry("Play Store", "com.android.vending", "▶", Color(0xFF1E88E5)) {
             if (!launchPkg(ctx, "com.android.vending")) openMarket(ctx, "com.android.vending")
@@ -389,35 +516,39 @@ private fun AppRow(ctx: Context, cfg: TvConfig, hdmi: List<HdmiInput>, accent: C
                 null
             }
             if (label != null && (pm.getLaunchIntentForPackage(p) != null || pm.getLeanbackLaunchIntentForPackage(p) != null)) {
-                list.add(Entry(label, p, null, Color(0xFF3A3F5C)) { launchPkg(ctx, p) })
+                list.add(Entry(label, p, null, Color(0xFF2A2F48)) { launchPkg(ctx, p) })
             }
         }
         for (h in hdmi) {
-            list.add(Entry(h.label, null, "🔌", Color(0xFF2E7D6B)) {
+            list.add(Entry(h.label, null, "🔌", Color(0xFF1F6B5C)) {
                 if (!openHdmi(ctx, h.id)) toast(ctx, "Giriş açılamadı")
             })
         }
-        list.add(Entry("Dosyalar", null, "📁", Color(0xFFFFA726)) { openFiles(ctx) })
-        list.add(Entry("Ayarlar", null, "⚙️", Color(0xFF607D8B)) { openSettings(ctx) })
-        list.add(Entry("Tüm uygulamalar", null, "⊞", Color(0xFF7E57C2)) { onAllApps() })
+        if (cfg.pcMac.isNotBlank()) list.add(Entry("Bilgisayarı aç", null, "🖥️", Color(0xFF34495E)) { runBg(ctx, "PC açılıyor") { Wol.send(cfg.pcMac, cfg.pcIp) } })
+        if (cfg.ps5Ip.isNotBlank()) list.add(Entry("PS5 uyandır", null, "🎮", Color(0xFF1B3A8A)) { runBg(ctx, "PS5 uyandırılıyor") { Ps5.wake(cfg.ps5Ip, cfg.ps5Cred) } })
+        list.add(Entry("Dosyalar", null, "📁", Color(0xFFB7791F)) { openFiles(ctx) })
+        list.add(Entry("Ayarlar", null, "⚙️", Color(0xFF4A5868)) { openSettings(ctx) })
+        list.add(Entry("Tüm uygulamalar", null, "⊞", Color(0xFF5E43A8)) { onAllApps() })
         list
     }
     val fr = remember { FocusRequester() }
     LaunchedEffect(Unit) {
-        delay(600)
+        delay(400)
         try { fr.requestFocus() } catch (_: Exception) {}
     }
-    Entrance(200) {
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(20.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 18.dp, horizontal = 8.dp)) {
-            items(entries.size) { i ->
-                val e = entries[i]
-                val icon = if (e.pkg != null) rememberAppIcon(ctx, e.pkg) else null
-                Tile(
-                    label = e.label, icon = icon, emoji = e.emoji, tint = e.tint, accent = accent,
-                    modifier = if (i == 0) Modifier.focusRequester(fr) else Modifier,
-                    onClick = e.action,
-                )
-            }
+    LazyRow(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 10.dp, horizontal = 6.dp),
+    ) {
+        items(entries.size) { i ->
+            val e = entries[i]
+            val icon = if (e.pkg != null) rememberAppIcon(ctx, e.pkg) else null
+            Tile(
+                label = e.label, icon = icon, emoji = e.emoji, tint = e.tint, accent = accent,
+                modifier = if (i == 0) Modifier.focusRequester(fr) else Modifier,
+                onClick = e.action,
+            )
         }
     }
 }
@@ -425,8 +556,7 @@ private fun AppRow(ctx: Context, cfg: TvConfig, hdmi: List<HdmiInput>, accent: C
 // ---------------------------------------------------------------- görsel parçalar
 
 @Composable
-private fun HomeVideo(act: ComponentActivity, name: String) {
-    val f = remember(name) { File(TvStore.mediaDir(act), name) }
+private fun HomeVideo(act: ComponentActivity, f: File) {
     val holder = remember { arrayOfNulls<SeamlessVideoView>(1) }
     DisposableEffect(Unit) {
         val obs = LifecycleEventObserver { _, ev ->
@@ -450,7 +580,7 @@ private fun HomeVideo(act: ComponentActivity, name: String) {
 }
 
 @Composable
-private fun HeroImage(ctx: Context, name: String, zoom: Float) {
+private fun HeroImage(ctx: Context, name: String) {
     val bmp by produceState<ImageBitmap?>(null, name) {
         value = withContext(Dispatchers.IO) {
             decodeScaled(File(TvStore.mediaDir(ctx), name), 1920)?.asImageBitmap()
@@ -458,62 +588,21 @@ private fun HeroImage(ctx: Context, name: String, zoom: Float) {
     }
     val b = bmp
     if (b != null) {
-        Image(
-            bitmap = b, contentDescription = null, contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom },
-        )
+        Image(bitmap = b, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
     }
 }
 
+/** Sabit (animasyonsuz) renk geçişi: bir kez çizilir, işlemciyi yormaz */
 @Composable
-private fun AnimatedGradient(accent: Color) {
-    val inf = rememberInfiniteTransition(label = "bg")
-    val p by inf.animateFloat(
-        0f, 6.28f,
-        infiniteRepeatable(tween(30000, easing = LinearEasing), RepeatMode.Restart),
-        label = "p",
-    )
+private fun StaticGradient(accent: Color) {
     Canvas(Modifier.fillMaxSize()) {
-        drawRect(Color(0xFF05070D))
         val w = size.width
         val h = size.height
-        val cols = listOf(accent, Color(0xFF2BD9C5), Color(0xFF3A7BFF), Color(0xFFFF5FA2))
-        cols.forEachIndexed { i, c ->
-            val cx = w * (0.5f + 0.38f * sin(p + i * 1.7f))
-            val cy = h * (0.5f + 0.32f * sin(p * 0.8f + i * 2.1f))
-            drawRect(
-                Brush.radialGradient(
-                    colors = listOf(c.copy(alpha = 0.40f), Color.Transparent),
-                    center = Offset(cx, cy),
-                    radius = max(w, h) * 0.5f,
-                ),
-            )
-        }
+        drawRect(Color(0xFF070A14))
+        drawRect(Brush.radialGradient(listOf(accent.copy(alpha = 0.45f), Color.Transparent), Offset(w * 0.85f, h * 0.35f), max(w, h) * 0.55f))
+        drawRect(Brush.radialGradient(listOf(Color(0xFF2B6BFF).copy(alpha = 0.35f), Color.Transparent), Offset(w * 0.3f, h * 0.2f), max(w, h) * 0.5f))
+        drawRect(Brush.radialGradient(listOf(Color(0xFF16C2B0).copy(alpha = 0.18f), Color.Transparent), Offset(w * 0.1f, h * 0.9f), max(w, h) * 0.45f))
     }
-}
-
-@Composable
-private fun Entrance(delayMs: Int, content: @Composable () -> Unit) {
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        delay(delayMs.toLong())
-        shown = true
-    }
-    val a by animateFloatAsState(if (shown) 1f else 0f, tween(800), label = "enter")
-    Box(Modifier.graphicsLayer { alpha = a; translationY = (1f - a) * 50f }) { content() }
-}
-
-@Composable
-private fun GlassCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    val shape = RoundedCornerShape(28.dp)
-    Box(
-        modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(Color.White.copy(alpha = 0.10f))
-            .border(1.dp, Color.White.copy(alpha = 0.16f), shape)
-            .padding(20.dp),
-    ) { content() }
 }
 
 @Composable
@@ -527,12 +616,11 @@ fun Tile(
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.14f else 1f, spring(dampingRatio = 0.5f, stiffness = 280f), label = "tile")
-    val glow by animateFloatAsState(if (focused) 1f else 0f, tween(250), label = "glow")
-    val shape = RoundedCornerShape(30.dp)
+    val scale by animateFloatAsState(if (focused) 1.1f else 1f, tween(150), label = "tile")
+    val shape = RoundedCornerShape(22.dp)
     Column(
         modifier
-            .width(124.dp)
+            .width(96.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick),
@@ -540,23 +628,22 @@ fun Tile(
     ) {
         Box(
             Modifier
-                .size(124.dp)
-                .shadow((26 * glow).dp, shape, ambientColor = accent, spotColor = accent)
+                .size(96.dp)
                 .clip(shape)
-                .background(Brush.linearGradient(listOf(tint.copy(alpha = 0.95f), tint.copy(alpha = 0.55f))))
-                .border(2.dp, Color.White.copy(alpha = 0.10f + 0.80f * glow), shape),
+                .background(tint)
+                .border(if (focused) 3.dp else 1.dp, if (focused) Color.White else Color(0x1FFFFFFF), shape),
             contentAlignment = Alignment.Center,
         ) {
             if (icon != null) {
-                Image(bitmap = icon, contentDescription = label, modifier = Modifier.size(78.dp))
+                Image(bitmap = icon, contentDescription = label, modifier = Modifier.size(62.dp))
             } else {
-                Text(emoji ?: "•", fontSize = 48.sp, color = Color.White)
+                Text(emoji ?: "•", fontSize = 38.sp, color = Color.White)
             }
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
-            label, color = Color.White.copy(alpha = 0.65f + 0.35f * glow), fontSize = 14.sp,
-            fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            label, color = if (focused) Color.White else Color(0xB3FFFFFF), fontSize = 13.sp,
+            fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -564,145 +651,18 @@ fun Tile(
 @Composable
 private fun Pill(label: String, accent: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.08f else 1f, spring(dampingRatio = 0.55f, stiffness = 300f), label = "pill")
     val shape = RoundedCornerShape(50)
     Box(
         modifier
-            .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused }
             .clip(shape)
             .background(if (focused) accent else Color.White.copy(alpha = 0.18f))
             .border(1.dp, Color.White.copy(alpha = if (focused) 0.9f else 0.2f), shape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 26.dp, vertical = 12.dp),
+            .padding(horizontal = 22.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-    }
-}
-
-// ---------------------------------------------------------------- widget'lar
-
-@Composable
-private fun ClockCard(cfg: TvConfig) {
-    var now by remember { mutableStateOf(Date()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            now = Date()
-            delay(1000)
-        }
-    }
-    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale("tr")) }
-    val dateFmt = remember { SimpleDateFormat("d MMMM, EEEE", Locale("tr")) }
-    GlassCard {
-        Column {
-            AnimatedContent(
-                targetState = timeFmt.format(now),
-                transitionSpec = {
-                    (slideInVertically { it / 2 } + fadeIn(tween(400))) togetherWith
-                        (slideOutVertically { -it / 2 } + fadeOut(tween(400)))
-                },
-                label = "clock",
-            ) { t ->
-                Text(t, color = Color.White, fontSize = 64.sp, fontWeight = FontWeight.Thin)
-            }
-            Text(dateFmt.format(now), color = Color.White.copy(alpha = 0.75f), fontSize = 16.sp)
-            Spacer(Modifier.height(6.dp))
-            Text(greeting(cfg.userName), color = Color.White.copy(alpha = 0.9f), fontSize = 17.sp, fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-@Composable
-private fun WeatherCard(cfg: TvConfig) {
-    GlassCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(Weather.emoji.ifBlank { "🌡️" }, fontSize = 44.sp)
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text(Weather.temp.ifBlank { "…" }, color = Color.White, fontSize = 38.sp, fontWeight = FontWeight.Light)
-                Text(cfg.city, color = Color.White.copy(alpha = 0.75f), fontSize = 15.sp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun CountdownCard(cfg: TvConfig, accent: Color) {
-    val days = remember(cfg.cdDate) {
-        try {
-            ChronoUnit.DAYS.between(LocalDate.now(), LocalDate.parse(cfg.cdDate)).toInt()
-        } catch (_: Exception) {
-            -1
-        }
-    }
-    if (cfg.cdTitle.isBlank() || days < 0) return
-    val frac by animateFloatAsState(minOf(days, 100) / 100f, tween(1600), label = "ring")
-    GlassCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(78.dp), contentAlignment = Alignment.Center) {
-                Canvas(Modifier.fillMaxSize()) {
-                    val st = 9.dp.toPx()
-                    drawArc(Color.White.copy(alpha = 0.15f), -90f, 360f, false, Offset(st / 2, st / 2), Size(size.width - st, size.height - st), style = Stroke(st))
-                    drawArc(accent, -90f, 360f * frac, false, Offset(st / 2, st / 2), Size(size.width - st, size.height - st), style = Stroke(st, cap = StrokeCap.Round))
-                }
-                Text("$days", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-            }
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text("gün kaldı", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-                Text(cfg.cdTitle, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ControlCard(ctx: Context, cfg: TvConfig, accent: Color) {
-    fun run(label: String, block: () -> Unit) {
-        thread {
-            try {
-                block()
-                toast(ctx, "$label ✓")
-            } catch (e: Exception) {
-                toast(ctx, "$label başarısız: ${e.message}")
-            }
-        }
-    }
-    GlassCard {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Ev kontrol", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MiniBtn("🖥️", "PC", accent, Modifier.weight(1f)) { run("PC açılıyor") { Wol.send(cfg.pcMac, cfg.pcIp) } }
-                MiniBtn("🎮", "PS5", accent, Modifier.weight(1f)) { run("PS5 uyandırılıyor") { Ps5.wake(cfg.ps5Ip, cfg.ps5Cred) } }
-                MiniBtn("🕹️", "Oyun", accent, Modifier.weight(1f)) {
-                    run("Oyun modu") {
-                        Wol.send(cfg.pcMac, cfg.pcIp)
-                        Ps5.wake(cfg.ps5Ip, cfg.ps5Cred)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MiniBtn(emoji: String, label: String, accent: Color, modifier: Modifier, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.1f else 1f, spring(dampingRatio = 0.55f, stiffness = 300f), label = "mini")
-    val shape = RoundedCornerShape(18.dp)
-    Column(
-        modifier
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .onFocusChanged { focused = it.isFocused }
-            .clip(shape)
-            .background(if (focused) accent else Color.White.copy(alpha = 0.12f))
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(emoji, fontSize = 24.sp)
-        Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -720,7 +680,7 @@ fun AllAppsScreen(ctx: Context, accent: Color) {
             Text("Tüm uygulamalar", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(24.dp))
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(140.dp),
+                columns = GridCells.Adaptive(116.dp),
                 horizontalArrangement = Arrangement.spacedBy(20.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),

@@ -184,8 +184,9 @@ class SaverView(ctx: Context, private val cfg: TvConfig) : FrameLayout(ctx) {
     }
 
     private fun buildVideo(): Boolean {
-        val f = File(TvStore.mediaDir(context), cfg.saverVideo)
-        if (cfg.saverVideo.isBlank() || !f.exists()) return false
+        val usb = if (cfg.usbAuto) UsbMedia.video?.takeIf { it.exists() } else null
+        val f = usb ?: File(TvStore.mediaDir(context), cfg.saverVideo)
+        if (usb == null && (cfg.saverVideo.isBlank() || !f.exists())) return false
         val v = SeamlessVideoView(context, f)
         v.onError = { m -> android.widget.Toast.makeText(context, m, android.widget.Toast.LENGTH_LONG).show() }
         addView(v, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -262,7 +263,7 @@ class SaverView(ctx: Context, private val cfg: TvConfig) : FrameLayout(ctx) {
 
     init {
         setBackgroundColor(Color.BLACK)
-        val ok = when (cfg.saverMode) {
+        val ok = when (if (cfg.usbAuto && UsbMedia.video != null) "video" else cfg.saverMode) {
             "images" -> buildImages()
             "video" -> buildVideo()
             "stars", "snow" -> {

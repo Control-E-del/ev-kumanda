@@ -39,6 +39,10 @@ button.ghost{background:rgba(255,255,255,.1)}button.red{background:#c0392b}
 <div class="card"><h2>Genel</h2><p class="hint">Karşılama mesajı ve vurgu rengi.</p>
 <div class="row"><div><label>Adın</label><input id="userName"></div><div><label>Vurgu rengi</label><input id="accent" type="color"></div></div></div>
 
+<div class="card"><h2>Takvim</h2><p class="hint">TV ana ekranında "Bugün", "Yarın", "3 gün kaldı" diye görünür. Geçmiş etkinlikler kendiliğinden silinir.</p>
+<div class="row"><div><label>Başlık</label><input id="evT" placeholder="ör. Doktor randevusu"></div><div><label>Tarih</label><input id="evD" type="date"></div><div><label>Saat (isteğe bağlı)</label><input id="evH" type="time"></div></div>
+<div style="margin-top:10px"><button onclick="addEv()">+ Etkinlik ekle</button></div><div id="evList" style="margin-top:10px"></div></div>
+
 <div class="card"><h2>Ana ekran afişleri</h2><p class="hint">Büyük afiş görselleri (16:9 yatay en iyisi). Sırayla döner. İstersen bir afişe uygulama bağla, tıklayınca o açılır.</p>
 <div class="hint" id="free"></div><label>Ana ekran arka plan videosu (seçilirse afiş görselleri yerine döngüde oynar)</label><select id="homeVideo"></select>
 <div class="row" style="margin:8px 0 14px"><button class="ghost" onclick="pick('vid-')">Video yükle (mp4)</button></div>
@@ -57,6 +61,7 @@ button.ghost{background:rgba(255,255,255,.1)}button.red{background:#c0392b}
 <div><label>Boşta kalma süresi (dk, 0 = kapalı)</label><input id="idleMin" type="number" min="0"></div>
 <div><label>Fotoğraf süresi (sn)</label><input id="saverInterval" type="number" min="4"></div></div>
 <label><input type="checkbox" id="saverClock"> Saat göster</label>
+<label><input type="checkbox" id="usbAuto"> USB bellek takılınca içindeki videoyu otomatik oynat ve TV'ye kopyala</label>
 <label>Video seç</label><select id="saverVideo"></select>
 <div class="row" style="margin-top:12px"><button class="ghost" onclick="pick('wall-')">Fotoğraf yükle</button>
 <button class="ghost" onclick="pick('vid-')">Video yükle (mp4)</button></div>
@@ -84,7 +89,8 @@ function isImg(n){return /\.(jpe?g|png|webp|gif)${'$'}/i.test(n)}
 function render(){
  var c=S.cfg;
  ['userName','accent','idleMin','saverInterval','city','lat','lon','cdTitle','cdDate','pcIp','pcMac','ps5Ip','ps5Cred'].forEach(function(k){g(k).value=c[k]==null?'':c[k]});
- g('saverMode').value=c.saverMode;g('saverClock').checked=!!c.saverClock;
+ g('saverMode').value=c.saverMode;g('saverClock').checked=!!c.saverClock;g('usbAuto').checked=c.usbAuto!==false;
+ renderEvents();
  ['saverVideo','homeVideo'].forEach(function(id){
   var vs=g(id);vs.innerHTML='<option value="">(yok)</option>';
   S.media.filter(function(m){return /^vid-/.test(m.name)}).forEach(function(m){var o=document.createElement('option');o.value=m.name;o.textContent=m.name;vs.appendChild(o)});
@@ -113,6 +119,19 @@ function renderHeroes(){
  });
  g('heroes').innerHTML=h;
 }
+function daysTo(d){var t=new Date();t.setHours(0,0,0,0);var x=new Date(d+'T00:00:00');return Math.round((x-t)/864e5)}
+function whenTxt(n){return n==0?'Bugün':n==1?'Yarın':n<0?'Geçti':n+' gün kaldı'}
+function renderEvents(){
+ var l=(S.cfg.events||[]).slice().sort(function(a,b){return (a.date+a.time)<(b.date+b.time)?-1:1});
+ g('evList').innerHTML=l.length?l.map(function(e){return '<div class="hero" style="display:flex;align-items:center;gap:10px"><div style="flex:1"><b>'+e.title.replace(/</g,'&lt;')+'</b><div class="hint" style="margin:2px 0 0">'+e.date+(e.time?' '+e.time:'')+' · '+whenTxt(daysTo(e.date))+'</div></div><button class="red" onclick="delEv(\''+e.id+'\')">Sil</button></div>'}).join(''):'<p class="hint">Henüz etkinlik yok.</p>';
+}
+function refreshEvents(){fetch('/api/events').then(function(r){return r.json()}).then(function(a){S.cfg.events=a;renderEvents()})}
+function addEv(){
+ var e={id:''+Date.now(),title:g('evT').value.trim(),date:g('evD').value,time:g('evH').value};
+ if(!e.title||!e.date){toast('Başlık ve tarih gir');return}
+ fetch('/api/events/add',{method:'POST',body:JSON.stringify(e)}).then(function(r){return r.text()}).then(function(t){if(t=='ok'){g('evT').value='';g('evH').value='';toast('Eklendi ✓');refreshEvents()}else toast(t)});
+}
+function delEv(id){fetch('/api/events/delete?id='+encodeURIComponent(id),{method:'POST'}).then(refreshEvents)}
 function addHero(){S.cfg.heroes=S.cfg.heroes||[];S.cfg.heroes.push({image:'',title:'',subtitle:'',pkg:''});renderHeroes()}
 function renderApps(){
  var p=S.cfg.pinned||[];
@@ -149,7 +168,7 @@ function save(){
  ['userName','accent','city','cdTitle','cdDate','pcIp','pcMac','ps5Ip','ps5Cred'].forEach(function(k){c[k]=g(k).value});
  c.idleMin=parseInt(g('idleMin').value||'0');c.saverInterval=parseInt(g('saverInterval').value||'12');
  c.lat=parseFloat(g('lat').value||'0');c.lon=parseFloat(g('lon').value||'0');
- c.saverMode=g('saverMode').value;c.saverClock=g('saverClock').checked;c.saverVideo=g('saverVideo').value;c.homeVideo=g('homeVideo').value;
+ c.saverMode=g('saverMode').value;c.saverClock=g('saverClock').checked;c.usbAuto=g('usbAuto').checked;c.saverVideo=g('saverVideo').value;c.homeVideo=g('homeVideo').value;
  fetch('/api/config',{method:'POST',body:JSON.stringify(c)}).then(function(r){return r.text()}).then(function(t){toast(t=='ok'?'Kaydedildi ✓':t)});
 }
 load();
