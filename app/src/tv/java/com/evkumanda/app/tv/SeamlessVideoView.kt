@@ -43,6 +43,7 @@ class SeamlessVideoView(ctx: Context, private val file: File, private val fadeMs
     private var switching = false
     private var single = false
     private var errorReported = false
+    private var retries = 0
 
     private val tick = object : Runnable {
         override fun run() {
@@ -109,17 +110,32 @@ class SeamlessVideoView(ctx: Context, private val file: File, private val fadeMs
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                if (slot === front) {
-                    if (!errorReported) {
-                        errorReported = true
-                        onError?.invoke(
-                            "Video oynatılamadı. TV bu çözünürlüğü/codec'i desteklemiyor olabilir. " +
-                                "H.265 (HEVC) 4K 30 fps dene.",
-                        )
-                    }
-                } else {
+                if (slot !== front) {
                     // İkinci dekoder açılamadı (donanım sınırı): tek oynatıcı kipine geç
                     enterSingle()
+                    return
+                }
+                enterSingle()
+                // Dekoder başka bir oynatıcıda meşgul olabilir: 2 kez yeniden dene
+                if (retries < 2) {
+                    retries++
+                    handler.postDelayed({
+                        try {
+                            p.prepare()
+                            p.seekTo(0)
+                            if (running) p.play()
+                        } catch (_: Exception) {
+                        }
+                    }, 2000L)
+                    return
+                }
+                if (!errorReported) {
+                    errorReported = true
+                    val code = error.errorCodeName
+                    Thread {
+                        val why = VideoProbe.explain(file)
+                        handler.post { onError?.invoke("Video oynatılamadı ($code). $why") }
+                    }.start()
                 }
             }
         })

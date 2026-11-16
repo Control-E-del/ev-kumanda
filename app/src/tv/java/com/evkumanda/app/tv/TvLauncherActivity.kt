@@ -557,20 +557,22 @@ private fun AppRow(ctx: Context, cfg: TvConfig, hdmi: List<HdmiInput>, accent: C
 
 @Composable
 private fun HomeVideo(act: ComponentActivity, f: File) {
-    val holder = remember { arrayOfNulls<SeamlessVideoView>(1) }
+    // Ekran koruyucu ya da başka uygulama öne gelince oynatıcı tamamen kapatılır ve dekoder
+    // serbest kalır (TV'lerde çoğunlukla tek 4K dekoder var); geri dönünce yeniden açılır.
+    var active by remember { mutableStateOf(act.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
     DisposableEffect(Unit) {
         val obs = LifecycleEventObserver { _, ev ->
-            if (ev == Lifecycle.Event.ON_STOP) holder[0]?.pause()
-            else if (ev == Lifecycle.Event.ON_START) holder[0]?.start()
+            if (ev == Lifecycle.Event.ON_STOP) active = false
+            else if (ev == Lifecycle.Event.ON_START) active = true
         }
         act.lifecycle.addObserver(obs)
         onDispose { act.lifecycle.removeObserver(obs) }
     }
+    if (!active) return
     AndroidView(
         factory = { c ->
             val v = SeamlessVideoView(c, f)
-            v.onError = { m -> toast(act.applicationContext, m) }
-            holder[0] = v
+            v.onError = { m -> Toast.makeText(act.applicationContext, m, Toast.LENGTH_LONG).show() }
             v.start()
             v
         },

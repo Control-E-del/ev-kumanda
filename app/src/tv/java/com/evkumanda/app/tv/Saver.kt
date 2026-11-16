@@ -258,7 +258,10 @@ class SaverView(ctx: Context, private val cfg: TvConfig) : FrameLayout(ctx) {
     fun stop() {
         running = false
         handler.removeCallbacksAndMessages(null)
-        video?.pause()
+        // Dekoderi hemen bırak ki ana ekran videosu açılabilsin
+        video?.release()
+        video?.let { removeView(it) }
+        video = null
     }
 
     init {
