@@ -44,7 +44,7 @@ object VideoProbe {
                 if (vc.areSizeAndRateSupported(w, h, fps.toDouble())) ok = true
                 val mw = vc.supportedWidths.upper
                 val mh = vc.supportedHeights.upper
-                val mf = try { vc.getSupportedFramesPerSecondFor(minOf(w, mw), minOf(h, mh)).upper.toInt() } catch (_: Exception) { 0 }
+                val mf = try { vc.getSupportedFrameRatesFor(minOf(w, mw), minOf(h, mh)).upper.toInt() } catch (_: Exception) { 0 }
                 val s = "${mw}x$mh${if (mf > 0) " ${mf}fps" else ""}"
                 if (mw * mh > bestPx) { bestPx = mw * mh; best = s }
             }
